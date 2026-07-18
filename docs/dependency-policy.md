@@ -58,3 +58,41 @@ Path dependencies допустимы только внутри workspace.
 Точный `cargo-cyclonedx 0.5.9` создает CycloneDX 1.5 документы; CI объединяет их с
 Rust/native license inventory в скачиваемый artifact. Процедура и pins описаны в
 `docs/ci.md`.
+
+## Review зависимостей базовых domain types
+
+Для `E01-T01`–`E01-T03` приняты следующие workspace dependencies:
+
+- `serde 1.0.228` с единственной дополнительной feature `derive` — типизированная
+  сериализация value/domain types; MSRV ниже workspace MSRV, native code и runtime
+  I/O отсутствуют;
+- `uuid 1.24.0` только с feature `serde` — хранение и проверка stable UUID; features
+  генерации и RNG намеренно не включены, чтобы создание ID не получило скрытый
+  nondeterministic source;
+- `serde_json 1.0.150` используется только в tests текущего среза; публичная
+  `.roadsim` schema этим не объявляется.
+
+Все версии разрешаются через committed `Cargo.lock`; crates используют только
+crates.io. Прямые зависимости имеют `MIT OR Apache-2.0`. Derive toolchain
+транзитивно использует `unicode-ident 1.0.24` с выражением
+`(MIT OR Apache-2.0) AND Unicode-3.0`: Unicode-3.0 разрешает использование и
+распространение при сохранении copyright/permission notice в копиях либо
+сопроводительной документации. Лицензия добавлена в явный allow-list и попадет в
+license inventory; исключение или `cargo-deny` skip не добавлялись.
+Для распространяемого binary/release bundle полный copyright/permission notice
+должен войти в third-party notices по `E16-T09`; текущий M0 inventory фиксирует
+обязательство, но не заменяет release notices.
+
+Проверены upstream metadata, MSRV/features, полный Cargo graph и RustSec advisory
+gate. Эти зависимости не добавляют filesystem, network, process, clock или native
+runtime boundary. Семантическая проверка соответствия authority/WKT фактическим
+единицам будет выполняться сервисом PROJ в `E14-T06`; текущий domain contract
+обязывает явно указать метрическую declared engineering unit и отклоняет
+degree/foot. Domain text limits ограничивают состояние модели, но pre-allocation
+byte/depth limits недоверенного документа остаются обязанностью `E03` storage
+boundary.
+
+Источники review: [Serde](https://docs.rs/crate/serde/1.0.228),
+[UUID](https://docs.rs/crate/uuid/1.24.0),
+[unicode-ident metadata](https://docs.rs/crate/unicode-ident/1.0.24/source/Cargo.toml),
+[Unicode License v3](https://spdx.org/licenses/Unicode-3.0.html).

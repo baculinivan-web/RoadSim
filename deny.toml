@@ -11,7 +11,9 @@ targets = [
 ignore = []
 
 [licenses]
-allow = ["Apache-2.0", "MIT"]
+# unicode-ident derives XID tables from Unicode data. Unicode-3.0 is reviewed
+# and documented in docs/dependency-policy.md; keep this allow-list explicit.
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
 confidence-threshold = 0.93
 
 [licenses.private]

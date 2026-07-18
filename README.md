@@ -4,9 +4,11 @@ RoadSim — открытое кроссплатформенное desktop-при
 небольших городских дорожных сетей и воспроизводимой микроскопической симуляции
 автомобилей, автобусов, трамваев и пешеходов.
 
-Проект находится на стадии foundation. Сейчас репозиторий содержит только
-собираемый Rust workspace и минимальные точки входа `roadsim-app` и
-`roadsim-cli`; редактор и simulation backend ещё не реализованы.
+Проект находится на ранней стадии M1. Репозиторий содержит собираемый Rust
+workspace, минимальные точки входа `roadsim-app`/`roadsim-cli` и первые
+backend-independent контракты Design Model: typed IDs, единицы, simulation ticks,
+project metadata и явное описание CRS. Интерактивный редактор и simulation
+backend ещё не реализованы.
 
 ## Source of truth
 

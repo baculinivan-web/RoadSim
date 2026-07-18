@@ -230,18 +230,18 @@ remote, поэтому это evidence пока невозможно получ�
 
 **Цель:** получить backend-independent семантическую модель с единицами и стабильными ID.
 
-| ID | Задача | Зависимости | Deliverable | Acceptance criteria |
-|---|---|---|---|---|
-| E01-T01 | Typed IDs и object references | E00 | `roadsim-types` | ID round-trip; type confusion не компилируется |
-| E01-T02 | Единицы, ticks, tolerances | T01 | typed length/speed/time/angle | locale-independent serialization; invalid finite values rejected |
-| E01-T03 | Project metadata и CRS descriptor | T01–T02 | project root types | CRS/unit/provenance обязательны |
-| E01-T04 | Reference line primitives | T02 | line/arc/transition API | continuity/property tests на границах |
-| E01-T05 | Corridor и cross-section model | T03–T04 | roads, profile sections, lane semantics | типовой подход описывается без meshes/backend IDs |
-| E01-T06 | Junction, crossing, sidewalk, rail semantics | T05 | domain entities | ссылки типизированы; dangling refs диагностируются |
-| E01-T07 | Traffic control model | T06 | signs/markings/signals/controllers | phase invariants и object refs тестируются |
-| E01-T08 | Demand/scenario/experiment skeleton | T03 | domain types без engine logic | явные units/intervals/seed policy |
-| E01-T09 | Rule configuration/exceptions model | T03 | pins/exceptions | stale hash semantics покрыта тестом |
-| E01-T10 | Semantic project hash | T01–T09 | canonical content hashing | UI/cache/order не меняют hash |
+| ID | Статус | Задача | Зависимости | Deliverable | Acceptance criteria |
+|---|---|---|---|---|---|
+| E01-T01 | ✅ Готово | Typed IDs и object references | E00 | `roadsim-types` | ID round-trip; type confusion не компилируется |
+| E01-T02 | ✅ Готово | Единицы, ticks, tolerances | T01 | typed length/speed/time/angle | locale-independent serialization; invalid finite values rejected |
+| E01-T03 | ✅ Готово | Project metadata и CRS descriptor | T01–T02 | project root types | CRS/unit/provenance обязательны |
+| E01-T04 | Не начато | Reference line primitives | T02 | line/arc/transition API | continuity/property tests на границах |
+| E01-T05 | Не начато | Corridor и cross-section model | T03–T04 | roads, profile sections, lane semantics | типовой подход описывается без meshes/backend IDs |
+| E01-T06 | Не начато | Junction, crossing, sidewalk, rail semantics | T05 | domain entities | ссылки типизированы; dangling refs диагностируются |
+| E01-T07 | Не начато | Traffic control model | T06 | signs/markings/signals/controllers | phase invariants и object refs тестируются |
+| E01-T08 | Не начато | Demand/scenario/experiment skeleton | T03 | domain types без engine logic | явные units/intervals/seed policy |
+| E01-T09 | Не начато | Rule configuration/exceptions model | T03 | pins/exceptions | stale hash semantics покрыта тестом |
+| E01-T10 | Не начато | Semantic project hash | T01–T09 | canonical content hashing | UI/cache/order не меняют hash |
 
 **Особое review:** геометрические типы и единицы должны быть одобрены до массового появления API. Иначе изменение распространяется на storage, renderer и backend.
 

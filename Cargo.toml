@@ -2,6 +2,8 @@
 members = [
     "crates/roadsim-app",
     "crates/roadsim-cli",
+    "crates/roadsim-domain",
+    "crates/roadsim-types",
 ]
 resolver = "3"
 
@@ -11,6 +13,11 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 publish = false
+
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+uuid = { version = "1.24.0", features = ["serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
