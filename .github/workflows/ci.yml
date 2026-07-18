@@ -87,7 +87,15 @@ jobs:
         run: python scripts/ci/check_toolchain.py
       - name: Build workspace
         run: cargo build --workspace --all-targets --all-features --locked
-      - name: Smoke desktop entry point
+      - name: Smoke desktop entry point (Linux/Xvfb)
+        if: runner.os == 'Linux'
+        env:
+          ROADSIM_SMOKE_EXIT_AFTER_FRAMES: 2
+        run: xvfb-run -a cargo run --locked --quiet -p roadsim-app
+      - name: Smoke desktop entry point (native window server)
+        if: runner.os != 'Linux'
+        env:
+          ROADSIM_SMOKE_EXIT_AFTER_FRAMES: 2
         run: cargo run --locked --quiet -p roadsim-app
       - name: Smoke CLI entry point
         run: cargo run --locked --quiet -p roadsim-cli

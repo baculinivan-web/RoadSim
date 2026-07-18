@@ -13,8 +13,9 @@ Design Model также содержит минимальные traffic-control 
 разметки, стоп-линий и фиксированных сигнальных программ, а project root —
 интервальный demand и воспроизводимые scenario/experiment definitions.
 Project также хранит exact ruleset pin и hash-bound audited exceptions без
-встроенной трактовки нормативных требований. Интерактивный редактор и simulation
-backend ещё не реализованы.
+встроенной трактовки нормативных требований. `roadsim-app` уже запускает первый
+нативный GPU/egui shell со статическим дорожным viewport; редактирование и
+simulation backend ещё не подключены.
 
 ## Source of truth
 

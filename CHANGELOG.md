@@ -51,6 +51,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлены exact ruleset pins и аудируемые rule exceptions, привязанные к object
   и ruleset SHA-256; изменение любого hash наблюдаемо переводит exception в stale.
   Нормативные требования и трактовки в этот contract не включены.
+- Desktop entry point теперь открывает нативное `winit` окно, создаёт `wgpu`
+  surface через Metal/DX12/Vulkan и рисует первый `egui` shell со статическим
+  дорожным viewport, object tree, inspector и simulation placeholder.
 
 ### Changed
 

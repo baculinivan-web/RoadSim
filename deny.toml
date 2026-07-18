@@ -8,12 +8,29 @@ targets = [
 ]
 
 [advisories]
-ignore = []
+ignore = [
+    # RUSTSEC-2024-0436: `paste` is build-time-only through Metal bindings in
+    # wgpu 27. No maintained replacement exists in the Rust-1.88-compatible
+    # wgpu/egui stack; it does not process project or runtime input.
+    "RUSTSEC-2024-0436",
+    # RUSTSEC-2026-0192: egui 0.33 uses ttf-parser for its bundled default fonts.
+    # RoadSim does not load project-provided fonts; revisit with the UI stack/MSRV.
+    "RUSTSEC-2026-0192",
+]
 
 [licenses]
 # unicode-ident derives XID tables from Unicode data. Unicode-3.0 is reviewed
 # and documented in docs/dependency-policy.md; keep this allow-list explicit.
-allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "ISC",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Zlib",
+]
 confidence-threshold = 0.93
 
 [licenses.private]

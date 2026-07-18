@@ -107,3 +107,35 @@ framework. Генератор используется только для ог�
 [unicode-ident metadata](https://docs.rs/crate/unicode-ident/1.0.24/source/Cargo.toml),
 [Unicode License v3](https://spdx.org/licenses/Unicode-3.0.html).
 [Proptest](https://docs.rs/crate/proptest/1.11.0).
+
+## Review desktop UI/GPU dependencies
+
+Для E05-T01…T03 выбран последний совместимый с точным Rust 1.88 набор:
+
+- `winit 0.30.13` — lifecycle нативного окна; отключены default features,
+  Linux baseline использует X11/XWayland, а macOS/Windows platform backends
+  выбираются target-specific кодом crate;
+- `egui`, `egui-winit` и `egui-wgpu 0.33.3` — UI, input bridge и renderer bridge;
+  более новые 0.35 требуют Rust 1.92 и нарушают текущий MSRV;
+- `wgpu 27.0.1` приходит через `egui-wgpu` и соответствует Rust 1.88;
+- `pollster 0.4.0` используется только для одноразовой инициализации GPU на
+  main thread до начала frame loop, не как application async runtime.
+
+Wayland feature намеренно не включена: совместимая ветка `wayland-scanner`
+зависит от `quick-xml 0.39`, для которого опубликованы RUSTSEC-2026-0194/0195.
+Linux smoke выполняется через Xvfb; native Wayland возвращается после обновления
+MSRV/UI stack. Проектные XML или другие недоверенные данные UI graph не парсит.
+
+Полный выбранный graph проходит license policy после явного разрешения
+совместимых `CC0-1.0`, `ISC`, `Zlib`, `OFL-1.1` и `Ubuntu-font-1.0`.
+Две unmaintained advisory закреплены узкими исключениями в `deny.toml`:
+RUSTSEC-2024-0436 (`paste`, build-time Metal bindings) и RUSTSEC-2026-0192
+(`ttf-parser`, только встроенные egui fonts). Пользовательские/project fonts не
+загружаются. Оба исключения пересматриваются вместе с MSRV/UI stack; они не
+скрывают vulnerability с доступным исправлением.
+
+Источники review: [winit 0.30.13](https://docs.rs/crate/winit/0.30.13),
+[wgpu 27.0.1](https://docs.rs/crate/wgpu/27.0.1),
+[egui 0.33.3](https://docs.rs/crate/egui/0.33.3),
+[RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436),
+[RUSTSEC-2026-0192](https://rustsec.org/advisories/RUSTSEC-2026-0192).

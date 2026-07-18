@@ -317,6 +317,12 @@ property test восстановления semantic project реализован
 | E05-T07 | Instanced dynamic agents | T02 | vehicle/person batches | 5k agent benchmark и bounded buffers |
 | E05-T08 | Screenshot/render regression harness | T03–T07 | controlled images | known scene stable within platform policy |
 
+Статус E05-T01…T03: 🟡 реализован первый связный shell. На macOS наблюдаемо
+создаются native window, Metal surface и два `egui` frame при DPI 200%, после
+чего smoke cleanly exits. Resize/minimize и input routing обработаны кодом;
+трёхплатформенное runtime evidence и принудительный device-loss test ещё нужны
+до статуса `✅ Готово`. Viewport пока статический и не читает Design Model.
+
 ## 14. Epic E06 — Editor UI и tools
 
 **Цель:** пользователь создает базовую модель только через domain commands.
