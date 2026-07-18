@@ -33,6 +33,10 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлена corridor/cross-section Design Model: corridor-local lane catalog,
   stable lane IDs, semantic direction/use, ordered left/right lane slices и
   piecewise-constant widths по station без meshes или backend IDs.
+- Добавлен отдельный `roadsim-commands` contract с atomic working-copy
+  transactions, monotonic model revision, stable command diagnostics и
+  типизированными create/update/delete corridor operations. Structural catalog
+  validation выполняется один раз перед публикацией полного command batch.
 
 ### Changed
 
@@ -55,3 +59,6 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Corridor validation повторно проверяется при deserialization и отклоняет
   dangling/duplicate lane references, нулевые widths, неупорядоченные или выходящие
   за reference line sections и непредставимую суммарную ширину.
+- Failed, aborted, empty, wrong-state, stale, domain-invalid и revision-overflow
+  transactions не публикуют working project и не изменяют model revision;
+  command envelopes привязаны к конкретной model lineage.

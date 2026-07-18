@@ -213,6 +213,15 @@ name = "roadsim-cli"
 version = "0.1.0"
 
 [[package]]
+name = "roadsim-commands"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "roadsim-domain",
+ "roadsim-types",
+]
+
+[[package]]
 name = "roadsim-domain"
 version = "0.1.0"
 dependencies = [

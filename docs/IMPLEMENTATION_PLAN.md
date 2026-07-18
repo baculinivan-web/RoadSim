@@ -249,17 +249,21 @@ remote, поэтому это evidence пока невозможно получ�
 
 **Цель:** все изменения модели проходят проверяемый command path.
 
-| ID | Задача | Зависимости | Deliverable | Acceptance criteria |
-|---|---|---|---|---|
-| E02-T01 | `ModelTransaction` и revision IDs | E01 | atomic mutation layer | failed transaction не меняет model/hash |
-| E02-T02 | Command trait/envelope/diagnostics | T01 | command API | код ошибки и affected IDs стабильны |
-| E02-T03 | Create/update/delete commands | T02 | базовый command set | structural validation на commit |
-| E02-T04 | Geometry intent commands | E01-T04, T02 | create/split/move corridor | один drag commit = одна команда |
-| E02-T05 | Undo/redo и inverse commands | T03–T04 | bounded command history | apply+inverse восстанавливает semantic hash |
-| E02-T06 | Proposed command/diff | T05 | preview API для auto/AI/fix | preview не меняет model; apply undoable |
-| E02-T07 | Fragment copy/paste format | T03 | versioned fragment | IDs remapped, external refs diagnosed |
-| E02-T08 | Variant spike и ADR-Q01 | E01-T10, T05 | benchmark/prototype/ADR | выбранный механизм поддерживает A/B без неявного общего mutable state |
-| E02-T09 | Variant implementation | T08 | variants API | изменение B не меняет A; hashes трассируются |
+| ID | Статус | Задача | Зависимости | Deliverable | Acceptance criteria |
+|---|---|---|---|---|---|
+| E02-T01 | 🟡 Реализовано¹ | `ModelTransaction` и revision IDs | E01 | atomic mutation layer | failed transaction не меняет model/hash |
+| E02-T02 | ✅ Готово | Command trait/envelope/diagnostics | T01 | command API | код ошибки и affected IDs стабильны |
+| E02-T03 | ✅ Готово | Create/update/delete commands | T02 | базовый command set | structural validation на commit |
+| E02-T04 | Не начато | Geometry intent commands | E01-T04, T02 | create/split/move corridor | один drag commit = одна команда |
+| E02-T05 | Не начато | Undo/redo и inverse commands | T03–T04 | bounded command history | apply+inverse восстанавливает semantic hash |
+| E02-T06 | Не начато | Proposed command/diff | T05 | preview API для auto/AI/fix | preview не меняет model; apply undoable |
+| E02-T07 | Не начато | Fragment copy/paste format | T03 | versioned fragment | IDs remapped, external refs diagnosed |
+| E02-T08 | Не начато | Variant spike и ADR-Q01 | E01-T10, T05 | benchmark/prototype/ADR | выбранный механизм поддерживает A/B без неявного общего mutable state |
+| E02-T09 | Не начато | Variant implementation | T08 | variants API | изменение B не меняет A; hashes трассируются |
+
+¹ Atomic project/revision behavior и failure paths реализованы. Проверка
+semantic hash добавится после E01-T10; до этого E02-T01 не отмечается полностью
+готовой.
 
 ## 11. Epic E03 — `.roadsim` storage v1
 

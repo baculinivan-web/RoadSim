@@ -2,6 +2,7 @@
 members = [
     "crates/roadsim-app",
     "crates/roadsim-cli",
+    "crates/roadsim-commands",
     "crates/roadsim-domain",
     "crates/roadsim-types",
 ]
