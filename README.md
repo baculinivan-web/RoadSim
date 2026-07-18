@@ -8,7 +8,8 @@ RoadSim — открытое кроссплатформенное desktop-при
 workspace, минимальные точки входа `roadsim-app`/`roadsim-cli` и первые
 backend-independent контракты Design Model: typed IDs, единицы, simulation ticks,
 project metadata, CRS, reference lines, corridor cross-sections и atomic typed
-commands. Интерактивный редактор и simulation backend ещё не реализованы.
+commands с bounded undo/redo. Интерактивный редактор и simulation backend ещё
+не реализованы.
 
 ## Source of truth
 

@@ -37,6 +37,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   transactions, monotonic model revision, stable command diagnostics и
   типизированными create/update/delete corridor operations. Structural catalog
   validation выполняется один раз перед публикацией полного command batch.
+- Corridor commands теперь возвращают inverse operations; state-bound
+  `CommandHistory` предоставляет bounded undo/redo, сохраняет stable IDs и
+  записывает multi-command transaction как одно history entry.
 
 ### Changed
 
@@ -62,3 +65,5 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Failed, aborted, empty, wrong-state, stale, domain-invalid и revision-overflow
   transactions не публикуют working project и не изменяют model revision;
   command envelopes привязаны к конкретной model lineage.
+- History отклоняет чужую model lineage и незаписанные изменения revision;
+  failed undo/redo не сдвигает history stacks.

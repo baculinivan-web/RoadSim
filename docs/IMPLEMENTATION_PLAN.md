@@ -255,7 +255,7 @@ remote, поэтому это evidence пока невозможно получ�
 | E02-T02 | ✅ Готово | Command trait/envelope/diagnostics | T01 | command API | код ошибки и affected IDs стабильны |
 | E02-T03 | ✅ Готово | Create/update/delete commands | T02 | базовый command set | structural validation на commit |
 | E02-T04 | Не начато | Geometry intent commands | E01-T04, T02 | create/split/move corridor | один drag commit = одна команда |
-| E02-T05 | Не начато | Undo/redo и inverse commands | T03–T04 | bounded command history | apply+inverse восстанавливает semantic hash |
+| E02-T05 | 🟡 Реализовано² | Undo/redo и inverse commands | T03–T04 | bounded command history | apply+inverse восстанавливает semantic hash |
 | E02-T06 | Не начато | Proposed command/diff | T05 | preview API для auto/AI/fix | preview не меняет model; apply undoable |
 | E02-T07 | Не начато | Fragment copy/paste format | T03 | versioned fragment | IDs remapped, external refs diagnosed |
 | E02-T08 | Не начато | Variant spike и ADR-Q01 | E01-T10, T05 | benchmark/prototype/ADR | выбранный механизм поддерживает A/B без неявного общего mutable state |
@@ -264,6 +264,10 @@ remote, поэтому это evidence пока невозможно получ�
 ¹ Atomic project/revision behavior и failure paths реализованы. Проверка
 semantic hash добавится после E01-T10; до этого E02-T01 не отмечается полностью
 готовой.
+
+² Bounded state-bound history, inverse для corridor CRUD, stable-ID restore и
+property test восстановления semantic project реализованы. Полное закрытие T05
+ожидает geometry intent commands T04 и semantic hash E01-T10.
 
 ## 11. Epic E03 — `.roadsim` storage v1
 

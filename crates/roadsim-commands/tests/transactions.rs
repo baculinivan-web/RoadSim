@@ -1,6 +1,7 @@
 use proptest::prelude::*;
 use roadsim_commands::{
-    CommandErrorCode, CreateCorridor, DeleteCorridor, ModelRevision, ModelState, UpdateCorridor,
+    CommandErrorCode, CommandHistory, CreateCorridor, DeleteCorridor, ModelRevision, ModelState,
+    UpdateCorridor,
 };
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CrossSectionLayout,
@@ -12,6 +13,7 @@ use roadsim_domain::{
 use roadsim_types::{
     CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId,
 };
+use std::num::NonZeroUsize;
 
 fn length(value: f64) -> LengthMeters {
     LengthMeters::try_new(value).unwrap()
@@ -306,6 +308,184 @@ fn invalid_final_catalog_is_rejected_without_publishing() {
     assert_eq!(state, before);
 }
 
+#[test]
+fn undo_and_redo_restore_corridor_state_and_stable_ids() {
+    let mut state = ModelState::new(empty_project());
+    let original = state.project().clone();
+    let mut history = CommandHistory::new(&state, NonZeroUsize::new(8).unwrap());
+
+    history
+        .execute(&mut state, &CreateCorridor::new(corridor(3.0)))
+        .unwrap();
+    let created = state.project().clone();
+    assert_eq!(history.undo_len(), 1);
+
+    history.undo(&mut state).unwrap();
+    assert_eq!(state.project(), &original);
+    assert_eq!(state.revision().get(), 2);
+    assert_eq!(history.redo_len(), 1);
+
+    history.redo(&mut state).unwrap();
+    assert_eq!(state.project(), &created);
+    assert_eq!(state.revision().get(), 3);
+    assert!(
+        state
+            .project()
+            .design_catalog()
+            .corridor(CorridorId::from_u128(10))
+            .is_some()
+    );
+}
+
+#[test]
+fn multi_command_transaction_is_one_undoable_history_entry() {
+    let mut state = ModelState::new(empty_project());
+    let original = state.project().clone();
+    let mut history = CommandHistory::new(&state, NonZeroUsize::new(8).unwrap());
+    let mut transaction = state.begin_transaction();
+    transaction
+        .apply(&CreateCorridor::new(corridor(3.0)))
+        .unwrap();
+    transaction
+        .apply(&UpdateCorridor::new(corridor(4.0)))
+        .unwrap();
+
+    let outcome = history.commit_transaction(&mut state, transaction).unwrap();
+
+    assert_eq!(outcome.inverse().operation_count(), 2);
+    assert_eq!(history.undo_len(), 1);
+    history.undo(&mut state).unwrap();
+    assert_eq!(state.project(), &original);
+    assert_eq!(history.undo_len(), 0);
+}
+
+#[test]
+fn bounded_history_evicts_oldest_entry_and_new_command_clears_redo() {
+    let mut state = ModelState::new(empty_project());
+    let mut history = CommandHistory::new(&state, NonZeroUsize::new(2).unwrap());
+    history
+        .execute(&mut state, &CreateCorridor::new(corridor(2.0)))
+        .unwrap();
+    history
+        .execute(&mut state, &UpdateCorridor::new(corridor(3.0)))
+        .unwrap();
+    history
+        .execute(&mut state, &UpdateCorridor::new(corridor(4.0)))
+        .unwrap();
+    assert_eq!(history.undo_len(), 2);
+
+    history.undo(&mut state).unwrap();
+    history.undo(&mut state).unwrap();
+    assert_eq!(
+        history.undo(&mut state).unwrap_err().code(),
+        CommandErrorCode::UndoUnavailable
+    );
+    assert_eq!(history.redo_len(), 2);
+
+    history.redo(&mut state).unwrap();
+    history
+        .execute(&mut state, &UpdateCorridor::new(corridor(5.0)))
+        .unwrap();
+    assert_eq!(history.redo_len(), 0);
+    assert_eq!(
+        history.redo(&mut state).unwrap_err().code(),
+        CommandErrorCode::RedoUnavailable
+    );
+}
+
+#[test]
+fn history_rejects_an_unrelated_model_lineage() {
+    let source = ModelState::new(empty_project());
+    let mut history = CommandHistory::new(&source, NonZeroUsize::new(2).unwrap());
+    let mut unrelated = ModelState::new(empty_project());
+    let before = unrelated.clone();
+
+    let error = history
+        .execute(&mut unrelated, &CreateCorridor::new(corridor(3.0)))
+        .unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::WrongState);
+    assert_eq!(unrelated, before);
+    assert_eq!(history.undo_len(), 0);
+}
+
+#[test]
+fn failed_recorded_command_does_not_change_history_or_state() {
+    let mut state = ModelState::new(empty_project());
+    let mut history = CommandHistory::new(&state, NonZeroUsize::new(2).unwrap());
+    history
+        .execute(&mut state, &CreateCorridor::new(corridor(3.0)))
+        .unwrap();
+    let before = state.clone();
+
+    let error = history
+        .execute(&mut state, &CreateCorridor::new(corridor(3.0)))
+        .unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::CorridorAlreadyExists);
+    assert_eq!(state, before);
+    assert_eq!(history.undo_len(), 1);
+}
+
+#[test]
+fn history_rejects_unrecorded_changes_on_the_same_lineage() {
+    let mut state = ModelState::new(empty_project());
+    let mut history = CommandHistory::new(&state, NonZeroUsize::new(2).unwrap());
+    history
+        .execute(&mut state, &CreateCorridor::new(corridor(3.0)))
+        .unwrap();
+    state.execute(&UpdateCorridor::new(corridor(4.0))).unwrap();
+    let before = state.clone();
+
+    let error = history.undo(&mut state).unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::StaleRevision);
+    assert_eq!(state, before);
+    assert_eq!(history.undo_len(), 1);
+}
+
+#[test]
+fn history_records_a_valid_envelope_and_rejects_it_after_it_becomes_stale() {
+    let mut state = ModelState::new(empty_project());
+    let mut history = CommandHistory::new(&state, NonZeroUsize::new(2).unwrap());
+    let first = state.envelope(CreateCorridor::new(corridor(3.0)));
+    history.execute_envelope(&mut state, &first).unwrap();
+    assert_eq!(history.undo_len(), 1);
+
+    let stale = state.envelope(UpdateCorridor::new(corridor(4.0)));
+    history
+        .execute(&mut state, &UpdateCorridor::new(corridor(5.0)))
+        .unwrap();
+    let before = state.clone();
+    let undo_len = history.undo_len();
+    let redo_len = history.redo_len();
+
+    let error = history.execute_envelope(&mut state, &stale).unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::StaleRevision);
+    assert_eq!(state, before);
+    assert_eq!(history.undo_len(), undo_len);
+    assert_eq!(history.redo_len(), redo_len);
+}
+
+#[test]
+fn history_rejects_an_envelope_from_another_lineage_without_stack_changes() {
+    let source = ModelState::new(empty_project());
+    let envelope = source.envelope(CreateCorridor::new(corridor(3.0)));
+    let mut target = ModelState::new(empty_project());
+    let mut history = CommandHistory::new(&target, NonZeroUsize::new(2).unwrap());
+    let before = target.clone();
+
+    let error = history
+        .execute_envelope(&mut target, &envelope)
+        .unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::WrongState);
+    assert_eq!(target, before);
+    assert_eq!(history.undo_len(), 0);
+    assert_eq!(history.redo_len(), 0);
+}
+
 proptest! {
     #[test]
     fn successful_command_batch_publishes_exactly_one_revision(
@@ -335,5 +515,21 @@ proptest! {
             .total_width()
             .get();
         prop_assert_eq!(stored_width, updated_width);
+    }
+
+    #[test]
+    fn apply_then_undo_restores_the_previous_semantic_project(
+        width in 0.5_f64..10.0,
+    ) {
+        let mut state = ModelState::new(empty_project());
+        let previous = state.project().clone();
+        let mut history = CommandHistory::new(&state, NonZeroUsize::new(1).unwrap());
+
+        history
+            .execute(&mut state, &CreateCorridor::new(corridor(width)))
+            .unwrap();
+        history.undo(&mut state).unwrap();
+
+        prop_assert_eq!(state.project(), &previous);
     }
 }

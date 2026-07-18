@@ -2,7 +2,13 @@
 
 use roadsim_domain::{Corridor, DesignCatalog, Project};
 use roadsim_types::{CorridorId, ObjectRef, ProjectId};
-use std::{collections::BTreeSet, error::Error, fmt, sync::Arc};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    error::Error,
+    fmt,
+    num::NonZeroUsize,
+    sync::Arc,
+};
 
 #[derive(Clone, Debug)]
 struct StateIdentity(Arc<()>);
@@ -58,6 +64,8 @@ pub enum CommandErrorCode {
     WrongState,
     StaleRevision,
     RevisionOverflow,
+    UndoUnavailable,
+    RedoUnavailable,
 }
 
 impl CommandErrorCode {
@@ -72,6 +80,8 @@ impl CommandErrorCode {
             Self::WrongState => "command.transaction.wrong_state",
             Self::StaleRevision => "command.transaction.stale_revision",
             Self::RevisionOverflow => "command.revision.overflow",
+            Self::UndoUnavailable => "command.history.undo_unavailable",
+            Self::RedoUnavailable => "command.history.redo_unavailable",
         }
     }
 }
@@ -108,11 +118,12 @@ impl fmt::Display for CommandError {
 impl Error for CommandError {}
 
 /// Observable effects of one committed logical transaction.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CommandOutcome {
     changed: BTreeSet<ObjectRef>,
     created: Vec<ObjectRef>,
     deleted: Vec<ObjectRef>,
+    inverse: InverseCommand,
 }
 
 impl CommandOutcome {
@@ -124,6 +135,11 @@ impl CommandOutcome {
         self.created.dedup();
         self.deleted.sort_unstable();
         self.deleted.dedup();
+        other
+            .inverse
+            .operations
+            .append(&mut self.inverse.operations);
+        self.inverse = other.inverse;
     }
     #[must_use]
     pub const fn changed(&self) -> &BTreeSet<ObjectRef> {
@@ -136,6 +152,40 @@ impl CommandOutcome {
     #[must_use]
     pub fn deleted(&self) -> &[ObjectRef] {
         &self.deleted
+    }
+    #[must_use]
+    pub const fn inverse(&self) -> &InverseCommand {
+        &self.inverse
+    }
+    #[must_use]
+    pub fn into_inverse(self) -> InverseCommand {
+        self.inverse
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum PrimitiveCommand {
+    Create(Corridor),
+    Update(Corridor),
+    Delete(CorridorId),
+}
+
+/// A command sequence that restores the semantic state preceding an operation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InverseCommand {
+    operations: Vec<PrimitiveCommand>,
+}
+
+impl InverseCommand {
+    fn single(operation: PrimitiveCommand) -> Self {
+        Self {
+            operations: vec![operation],
+        }
+    }
+
+    #[must_use]
+    pub fn operation_count(&self) -> usize {
+        self.operations.len()
     }
 }
 
@@ -155,8 +205,12 @@ impl TransactionModel {
     }
 }
 
-/// A typed domain command. UI-specific gestures never enter this contract.
-pub trait Command {
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// A typed domain command. UI-specific gestures never enter this sealed contract.
+pub trait Command: sealed::Sealed {
     fn apply(&self, model: &mut TransactionModel) -> Result<CommandOutcome, CommandError>;
 }
 
@@ -195,6 +249,8 @@ impl CreateCorridor {
     }
 }
 
+impl sealed::Sealed for CreateCorridor {}
+
 impl Command for CreateCorridor {
     fn apply(&self, model: &mut TransactionModel) -> Result<CommandOutcome, CommandError> {
         let id = self.corridor.id();
@@ -210,6 +266,7 @@ impl Command for CreateCorridor {
             changed: BTreeSet::from([object_ref]),
             created: vec![object_ref],
             deleted: Vec::new(),
+            inverse: InverseCommand::single(PrimitiveCommand::Delete(id)),
         })
     }
 }
@@ -225,6 +282,8 @@ impl UpdateCorridor {
     }
 }
 
+impl sealed::Sealed for UpdateCorridor {}
+
 impl Command for UpdateCorridor {
     fn apply(&self, model: &mut TransactionModel) -> Result<CommandOutcome, CommandError> {
         let id = self.corridor.id();
@@ -238,12 +297,13 @@ impl Command for UpdateCorridor {
                 vec![id.into()],
             ));
         };
-        model.corridors[index] = self.corridor.clone();
+        let previous = std::mem::replace(&mut model.corridors[index], self.corridor.clone());
         let object_ref = ObjectRef::from(id);
         Ok(CommandOutcome {
             changed: BTreeSet::from([object_ref]),
             created: Vec::new(),
             deleted: Vec::new(),
+            inverse: InverseCommand::single(PrimitiveCommand::Update(previous)),
         })
     }
 }
@@ -259,6 +319,8 @@ impl DeleteCorridor {
     }
 }
 
+impl sealed::Sealed for DeleteCorridor {}
+
 impl Command for DeleteCorridor {
     fn apply(&self, model: &mut TransactionModel) -> Result<CommandOutcome, CommandError> {
         let Some(index) = model
@@ -271,13 +333,41 @@ impl Command for DeleteCorridor {
                 vec![self.id.into()],
             ));
         };
-        model.corridors.remove(index);
+        let deleted = model.corridors.remove(index);
         let object_ref = ObjectRef::from(self.id);
         Ok(CommandOutcome {
             changed: BTreeSet::from([object_ref]),
             created: Vec::new(),
             deleted: vec![object_ref],
+            inverse: InverseCommand::single(PrimitiveCommand::Create(deleted)),
         })
+    }
+}
+
+impl sealed::Sealed for InverseCommand {}
+
+impl Command for InverseCommand {
+    fn apply(&self, model: &mut TransactionModel) -> Result<CommandOutcome, CommandError> {
+        if self.operations.is_empty() {
+            return Err(CommandError::new(
+                CommandErrorCode::EmptyTransaction,
+                Vec::new(),
+            ));
+        }
+        let mut combined = CommandOutcome::default();
+        for operation in &self.operations {
+            let outcome = match operation {
+                PrimitiveCommand::Create(corridor) => {
+                    CreateCorridor::new(corridor.clone()).apply(model)
+                }
+                PrimitiveCommand::Update(corridor) => {
+                    UpdateCorridor::new(corridor.clone()).apply(model)
+                }
+                PrimitiveCommand::Delete(id) => DeleteCorridor::new(*id).apply(model),
+            }?;
+            combined.merge(outcome);
+        }
+        Ok(combined)
     }
 }
 
@@ -463,5 +553,141 @@ impl ModelTransaction {
         state.project = rebuild_project(&self.project_shell, catalog);
         state.revision = next_revision;
         Ok(self.outcome)
+    }
+}
+
+/// Bounded, state-lineage-specific undo/redo history.
+#[derive(Debug)]
+pub struct CommandHistory {
+    state_identity: StateIdentity,
+    project_id: ProjectId,
+    observed_revision: ModelRevision,
+    capacity: NonZeroUsize,
+    undo: VecDeque<InverseCommand>,
+    redo: VecDeque<InverseCommand>,
+}
+
+impl CommandHistory {
+    #[must_use]
+    pub fn new(state: &ModelState, capacity: NonZeroUsize) -> Self {
+        Self {
+            state_identity: state.identity.clone(),
+            project_id: state.project.id(),
+            observed_revision: state.revision,
+            capacity,
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
+        }
+    }
+
+    #[must_use]
+    pub const fn capacity(&self) -> NonZeroUsize {
+        self.capacity
+    }
+
+    #[must_use]
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
+
+    #[must_use]
+    pub fn redo_len(&self) -> usize {
+        self.redo.len()
+    }
+
+    pub fn execute<C: Command>(
+        &mut self,
+        state: &mut ModelState,
+        command: &C,
+    ) -> Result<CommandOutcome, CommandError> {
+        self.ensure_state(state)?;
+        let outcome = state.execute(command)?;
+        self.observed_revision = state.revision;
+        self.record_new(outcome.inverse().clone());
+        Ok(outcome)
+    }
+
+    pub fn execute_envelope<C: Command>(
+        &mut self,
+        state: &mut ModelState,
+        envelope: &CommandEnvelope<C>,
+    ) -> Result<CommandOutcome, CommandError> {
+        self.ensure_state(state)?;
+        let outcome = state.execute_envelope(envelope)?;
+        self.observed_revision = state.revision;
+        self.record_new(outcome.inverse().clone());
+        Ok(outcome)
+    }
+
+    pub fn commit_transaction(
+        &mut self,
+        state: &mut ModelState,
+        transaction: ModelTransaction,
+    ) -> Result<CommandOutcome, CommandError> {
+        self.ensure_state(state)?;
+        let outcome = transaction.commit(state)?;
+        self.observed_revision = state.revision;
+        self.record_new(outcome.inverse().clone());
+        Ok(outcome)
+    }
+
+    pub fn undo(&mut self, state: &mut ModelState) -> Result<CommandOutcome, CommandError> {
+        self.ensure_state(state)?;
+        let command = self
+            .undo
+            .back()
+            .cloned()
+            .ok_or_else(|| CommandError::new(CommandErrorCode::UndoUnavailable, Vec::new()))?;
+        let outcome = state.execute(&command)?;
+        self.observed_revision = state.revision;
+        self.undo.pop_back();
+        Self::push_bounded(&mut self.redo, self.capacity, outcome.inverse().clone());
+        Ok(outcome)
+    }
+
+    pub fn redo(&mut self, state: &mut ModelState) -> Result<CommandOutcome, CommandError> {
+        self.ensure_state(state)?;
+        let command = self
+            .redo
+            .back()
+            .cloned()
+            .ok_or_else(|| CommandError::new(CommandErrorCode::RedoUnavailable, Vec::new()))?;
+        let outcome = state.execute(&command)?;
+        self.observed_revision = state.revision;
+        self.redo.pop_back();
+        Self::push_bounded(&mut self.undo, self.capacity, outcome.inverse().clone());
+        Ok(outcome)
+    }
+
+    fn ensure_state(&self, state: &ModelState) -> Result<(), CommandError> {
+        if self.state_identity == state.identity {
+            if self.observed_revision == state.revision {
+                return Ok(());
+            }
+            return Err(CommandError::new(
+                CommandErrorCode::StaleRevision,
+                vec![state.project.id().into()],
+            ));
+        }
+        Err(CommandError::new(
+            CommandErrorCode::WrongState,
+            vec![self.project_id.into(), state.project.id().into()],
+        ))
+    }
+
+    fn record_new(&mut self, inverse: InverseCommand) {
+        Self::push_bounded(&mut self.undo, self.capacity, inverse);
+        self.redo.clear();
+    }
+
+    fn push_bounded(
+        queue: &mut VecDeque<InverseCommand>,
+        capacity: NonZeroUsize,
+        command: InverseCommand,
+    ) {
+        if queue.len() == capacity.get() {
+            queue.pop_front();
+        }
+        queue.push_back(command);
     }
 }
