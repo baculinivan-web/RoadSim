@@ -6,13 +6,15 @@ use roadsim_commands::{
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, ControlCode, CoordinateReference, Corridor, CorridorSide,
     CrossSectionLayout, CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance,
-    DesignCatalog, EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection,
-    LaneSlice, LaneUse, LocalOrigin, Point2Meters, Project, ProjectMetadata, RailAlignment,
-    ReferenceLine, ReferenceLineElement, ReferenceLinePose, Sidewalk, StopLine,
-    TrafficControlCatalog, TrafficSign, VerticalDatum,
+    DemandEndpoint, DemandFlow, DemandInterval, DemandMode, DemandProfile, DesignCatalog,
+    EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
+    LocalOrigin, Point2Meters, Project, ProjectMetadata, RailAlignment, ReferenceLine,
+    ReferenceLineElement, ReferenceLinePose, Scenario, ScenarioTiming, Sidewalk, StopLine,
+    StudyCatalog, TrafficControlCatalog, TrafficSign, VerticalDatum,
 };
 use roadsim_types::{
-    CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId, RailAlignmentId,
+    CoordinateMeters, CorridorId, DemandFlowId, DemandProfileId, DurationSeconds, FlowRatePerHour,
+    HeadingRadians, LaneId, LengthMeters, ProjectId, RailAlignmentId, RootSeed, ScenarioId,
     SidewalkId, StopLineId, TrafficSignId,
 };
 use std::num::NonZeroUsize;
@@ -593,6 +595,63 @@ fn deleting_a_referenced_corridor_is_rejected_atomically() {
         .execute(&DeleteCorridor::new(CorridorId::from_u128(10)))
         .unwrap_err();
 
+    assert_eq!(error.code(), CommandErrorCode::DomainInvariant);
+    assert_eq!(state, before);
+}
+
+#[test]
+fn corridor_commands_preserve_scenarios_and_reject_dangling_demand() {
+    let profile_id = DemandProfileId::from_u128(80);
+    let scenario_id = ScenarioId::from_u128(81);
+    let flow = DemandFlow::new(
+        DemandFlowId::from_u128(82),
+        DemandMode::Car,
+        DemandEndpoint::Corridor(CorridorId::from_u128(10)),
+        DemandEndpoint::Corridor(CorridorId::from_u128(11)),
+        vec![
+            DemandInterval::new(
+                DurationSeconds::try_new(0.0).unwrap(),
+                DurationSeconds::try_new(600.0).unwrap(),
+                FlowRatePerHour::try_new(500.0).unwrap(),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    let study = StudyCatalog::new(
+        vec![DemandProfile::new(profile_id, vec![flow]).unwrap()],
+        vec![Scenario::new(
+            scenario_id,
+            profile_id,
+            ScenarioTiming::new(
+                DurationSeconds::try_new(0.0).unwrap(),
+                DurationSeconds::try_new(600.0).unwrap(),
+                DurationSeconds::try_new(1.0).unwrap(),
+                DurationSeconds::try_new(5.0).unwrap(),
+            )
+            .unwrap(),
+            RootSeed::new(42),
+        )],
+        vec![],
+    )
+    .unwrap();
+    let project = project_with_corridors(vec![
+        corridor_with_ids(10, 20, 3.0),
+        corridor_with_ids(11, 21, 3.0),
+    ])
+    .with_study_catalog(study)
+    .unwrap();
+    let mut state = ModelState::new(project);
+
+    state.execute(&UpdateCorridor::new(corridor(4.0))).unwrap();
+    assert_eq!(
+        state.project().study_catalog().scenarios()[0].root_seed(),
+        RootSeed::new(42)
+    );
+    let before = state.clone();
+    let error = state
+        .execute(&DeleteCorridor::new(CorridorId::from_u128(11)))
+        .unwrap_err();
     assert_eq!(error.code(), CommandErrorCode::DomainInvariant);
     assert_eq!(state, before);
 }

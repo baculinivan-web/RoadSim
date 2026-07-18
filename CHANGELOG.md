@@ -45,6 +45,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлена backend-independent модель знаков, разметки, стоп-линий, сигнальных
   групп/головок, фаз, программ и контроллеров с typed object references и
   проверкой длительностей, intergreen и связей с junction/corridor/lane.
+- Добавлен project-level skeleton интервального demand, scenarios и experiments:
+  rates имеют явную единицу «в час», timing разделяет warm-up/duration/step/output
+  sampling, а каждый одиночный run и replication получает явный root seed.
 
 ### Changed
 

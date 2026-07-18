@@ -1,4 +1,4 @@
-use crate::DesignCatalog;
+use crate::{DesignCatalog, ScenarioError, StudyCatalog};
 use roadsim_types::{CoordinateMeters, ProjectId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{error::Error, fmt};
@@ -396,12 +396,13 @@ impl CoordinateReference {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Project {
     id: ProjectId,
     metadata: ProjectMetadata,
     coordinate_reference: CoordinateReference,
     design_catalog: DesignCatalog,
+    study_catalog: StudyCatalog,
 }
 
 impl Project {
@@ -416,6 +417,7 @@ impl Project {
             metadata,
             coordinate_reference,
             design_catalog: DesignCatalog::empty(),
+            study_catalog: StudyCatalog::empty(),
         }
     }
 
@@ -431,7 +433,17 @@ impl Project {
             metadata,
             coordinate_reference,
             design_catalog,
+            study_catalog: StudyCatalog::empty(),
         }
+    }
+
+    pub fn with_study_catalog(
+        mut self,
+        study_catalog: StudyCatalog,
+    ) -> Result<Self, ScenarioError> {
+        study_catalog.validate_against(&self.design_catalog)?;
+        self.study_catalog = study_catalog;
+        Ok(self)
     }
 
     #[must_use]
@@ -452,5 +464,36 @@ impl Project {
     #[must_use]
     pub const fn design_catalog(&self) -> &DesignCatalog {
         &self.design_catalog
+    }
+
+    #[must_use]
+    pub const fn study_catalog(&self) -> &StudyCatalog {
+        &self.study_catalog
+    }
+}
+
+impl<'de> Deserialize<'de> for Project {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            id: ProjectId,
+            metadata: ProjectMetadata,
+            coordinate_reference: CoordinateReference,
+            design_catalog: DesignCatalog,
+            #[serde(default)]
+            study_catalog: StudyCatalog,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Self::with_catalog(
+            wire.id,
+            wire.metadata,
+            wire.coordinate_reference,
+            wire.design_catalog,
+        )
+        .with_study_catalog(wire.study_catalog)
+        .map_err(serde::de::Error::custom)
     }
 }

@@ -71,7 +71,10 @@ pub enum ObjectKind {
     SignalProgram,
     SignalPhase,
     SignalController,
+    DemandProfile,
+    DemandFlow,
     Scenario,
+    Experiment,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -108,4 +111,7 @@ typed_id!(SignalGroupId, SignalGroup);
 typed_id!(SignalProgramId, SignalProgram);
 typed_id!(SignalPhaseId, SignalPhase);
 typed_id!(SignalControllerId, SignalController);
+typed_id!(DemandProfileId, DemandProfile);
+typed_id!(DemandFlowId, DemandFlow);
 typed_id!(ScenarioId, Scenario);
+typed_id!(ExperimentId, Experiment);

@@ -1,8 +1,8 @@
 use roadsim_types::{
     AngleRadians, CoordinateMeters, CorridorId, CurvaturePerMeter, CurvatureTolerancePerMeter,
-    DurationSeconds, HeadingRadians, LaneId, LengthMeters, ObjectKind, ObjectRef, ProjectId,
-    RailAlignmentId, SidewalkId, SimulationTick, SpeedMetersPerSecond, ToleranceMeters,
-    ValueErrorCode, WalkingAreaId,
+    DurationSeconds, FlowRatePerHour, HeadingRadians, LaneId, LengthMeters, ObjectKind, ObjectRef,
+    ProjectId, RailAlignmentId, RootSeed, SidewalkId, SimulationTick, SpeedMetersPerSecond,
+    ToleranceMeters, ValueErrorCode, WalkingAreaId,
 };
 
 #[test]
@@ -67,6 +67,10 @@ fn scalar_types_reject_non_finite_and_domain_invalid_values() {
     );
     assert_eq!(
         DurationSeconds::try_new(-0.1).unwrap_err().code(),
+        ValueErrorCode::Negative
+    );
+    assert_eq!(
+        FlowRatePerHour::try_new(-0.1).unwrap_err().code(),
         ValueErrorCode::Negative
     );
     assert_eq!(
@@ -143,4 +147,12 @@ fn simulation_ticks_are_integer_and_checked() {
     assert_eq!(serde_json::to_string(&tick).unwrap(), "41");
     assert_eq!(tick.checked_add(1), Some(SimulationTick::new(42)));
     assert_eq!(SimulationTick::new(u64::MAX).checked_add(1), None);
+}
+
+#[test]
+fn root_seed_is_explicit_and_round_trips_without_a_default() {
+    let seed = RootSeed::new(u64::MAX);
+    let encoded = serde_json::to_string(&seed).unwrap();
+    assert_eq!(encoded, u64::MAX.to_string());
+    assert_eq!(serde_json::from_str::<RootSeed>(&encoded).unwrap(), seed);
 }

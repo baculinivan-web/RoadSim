@@ -8,6 +8,7 @@ mod corridor;
 mod multimodal;
 mod project;
 mod reference_line;
+mod scenario;
 mod traffic_control;
 
 pub use corridor::{
@@ -28,6 +29,10 @@ pub use reference_line::{
     BoundaryContinuity, CircularArcSegment, LineSegment, LinearCurvatureTransition, Point2Meters,
     ReferenceLine, ReferenceLineBoundary, ReferenceLineElement, ReferenceLineElementKind,
     ReferenceLineError, ReferenceLineErrorCode, ReferenceLinePose, StationRange,
+};
+pub use scenario::{
+    DemandEndpoint, DemandFlow, DemandInterval, DemandMode, DemandProfile, Experiment, Scenario,
+    ScenarioError, ScenarioErrorCode, ScenarioTiming, StudyCatalog,
 };
 pub use traffic_control::{
     ControlCode, ControlError, ControlErrorCode, GroupState, RoadMarking, SignalController,

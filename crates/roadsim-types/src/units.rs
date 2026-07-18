@@ -89,6 +89,7 @@ finite_scalar!(LengthMeters, true);
 finite_scalar!(CoordinateMeters, false);
 finite_scalar!(SpeedMetersPerSecond, true);
 finite_scalar!(DurationSeconds, true);
+finite_scalar!(FlowRatePerHour, true);
 finite_scalar!(AngleRadians, false);
 finite_scalar!(ToleranceMeters, true);
 finite_scalar!(CurvaturePerMeter, false);
@@ -158,5 +159,25 @@ impl SimulationTick {
             Some(value) => Some(Self(value)),
             None => None,
         }
+    }
+}
+
+/// Explicit root for deterministic simulation random streams.
+///
+/// Substream derivation is defined by the backend contract in `E09-T03`;
+/// this value never falls back to wall-clock time.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct RootSeed(u64);
+
+impl RootSeed {
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
     }
 }

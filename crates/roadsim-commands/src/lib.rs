@@ -371,13 +371,20 @@ impl Command for InverseCommand {
     }
 }
 
-fn rebuild_project(project: &Project, catalog: DesignCatalog) -> Project {
+fn rebuild_project(project: &Project, catalog: DesignCatalog) -> Result<Project, CommandError> {
     Project::with_catalog(
         project.id(),
         project.metadata().clone(),
         project.coordinate_reference().clone(),
         catalog,
     )
+    .with_study_catalog(project.study_catalog().clone())
+    .map_err(|error| {
+        CommandError::new(
+            CommandErrorCode::DomainInvariant,
+            error.object_refs().to_vec(),
+        )
+    })
 }
 
 /// Owned project state exposed to application orchestration.
@@ -550,7 +557,7 @@ impl ModelTransaction {
                     error.object_refs().to_vec(),
                 )
             })?;
-        state.project = rebuild_project(&self.project_shell, catalog);
+        state.project = rebuild_project(&self.project_shell, catalog)?;
         state.revision = next_revision;
         Ok(self.outcome)
     }

@@ -13,12 +13,13 @@ mod ids;
 mod units;
 
 pub use ids::{
-    CorridorId, CrossingId, JunctionId, LaneId, ObjectKind, ObjectRef, ProjectId, RailAlignmentId,
-    RoadMarkingId, ScenarioId, SidewalkId, SignalControllerId, SignalGroupId, SignalHeadId,
-    SignalPhaseId, SignalProgramId, StopLineId, TrafficSignId, WalkingAreaId,
+    CorridorId, CrossingId, DemandFlowId, DemandProfileId, ExperimentId, JunctionId, LaneId,
+    ObjectKind, ObjectRef, ProjectId, RailAlignmentId, RoadMarkingId, ScenarioId, SidewalkId,
+    SignalControllerId, SignalGroupId, SignalHeadId, SignalPhaseId, SignalProgramId, StopLineId,
+    TrafficSignId, WalkingAreaId,
 };
 pub use units::{
     AngleRadians, CoordinateMeters, CurvaturePerMeter, CurvatureTolerancePerMeter, DurationSeconds,
-    HeadingRadians, LengthMeters, SimulationTick, SpeedMetersPerSecond, ToleranceMeters,
-    ValueError, ValueErrorCode,
+    FlowRatePerHour, HeadingRadians, LengthMeters, RootSeed, SimulationTick, SpeedMetersPerSecond,
+    ToleranceMeters, ValueError, ValueErrorCode,
 };
