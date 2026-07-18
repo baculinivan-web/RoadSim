@@ -13,17 +13,27 @@ Design Model также содержит минимальные traffic-control 
 разметки, стоп-линий и фиксированных сигнальных программ, а project root —
 интервальный demand и воспроизводимые scenario/experiment definitions.
 Project также хранит exact ruleset pin и hash-bound audited exceptions без
-встроенной трактовки нормативных требований. `roadsim-app` уже запускает первый
-нативный GPU/egui shell со статическим дорожным viewport; редактирование и
-simulation backend ещё не подключены.
+встроенной трактовки нормативных требований. `roadsim-app` запускает нативный
+GPU/egui shell и показывает compiled straight-road demo с движущимися агентами;
+редактирование и production SUMO backend ещё не подключены.
 
 Прямой corridor с постоянным cross-section уже детерминированно компилируется в
 отдельный immutable Compiled Simulation Network. Кривые и переменный профиль на
 этом этапе отклоняются явной diagnostic, а не упрощаются молча.
 
 Для тестирования backend boundary есть deterministic in-memory backend с явным
-seed, capability preflight и lifecycle; desktop controls подключаются следующим
-срезом. Это test backend, а не скрытая замена SUMO.
+seed, capability preflight и lifecycle. Desktop UI запускает, приостанавливает,
+продолжает и отменяет этот run. Это test backend, а не скрытая замена SUMO.
+
+## Запуск desktop demo
+
+```text
+cargo +1.88.0 run --locked -p roadsim-app
+```
+
+В правой панели нажмите **«Запустить»**: в viewport появятся 18 движущихся
+агентов. **«Пауза»**, **«Продолжить»** и **«Стоп»** управляют fake run; после
+остановки или завершения его можно запустить заново с тем же deterministic seed.
 
 ## Source of truth
 

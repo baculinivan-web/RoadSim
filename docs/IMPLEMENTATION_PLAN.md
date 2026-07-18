@@ -321,7 +321,9 @@ property test восстановления semantic project реализован
 создаются native window, Metal surface и два `egui` frame при DPI 200%, после
 чего smoke cleanly exits. Resize/minimize и input routing обработаны кодом;
 трёхплатформенное runtime evidence и принудительный device-loss test ещё нужны
-до статуса `✅ Готово`. Viewport пока статический и не читает Design Model.
+до статуса `✅ Готово`. Viewport теперь читает immutable CSN встроенного валидного
+Design Model и показывает fake-backend frame batches; camera/selection, cached
+meshes и instanced/performance acceptance E05-T04…T08 ещё не реализованы.
 
 ## 14. Epic E06 — Editor UI и tools
 
@@ -415,6 +417,13 @@ unsupported errors, pause/resume/cancel, terminal semantics, bounded idempotency
 keys и deterministic frame batches покрыты contract/property tests; root seed
 substreams закреплены known vectors. Worker protocol, metric batching, watchdog,
 resource directories и общий suite для внешних backend остаются невыполненными.
+
+Preview вертикального пути E11: desktop наблюдаемо выполняет встроенный Design
+Model → CSN → fake backend → 18-agent frame overlay и предоставляет
+Start/Pause/Resume/Stop с unit lifecycle tests. Native macOS smoke за два GPU
+frame подтверждает `simulation_state=running tick=0 agents=18`. Это ранняя
+проверка границ, а не закрытие E11-T01…T03: production orchestration всё ещё
+зависит от E10 worker/state batches, frame adapter не instanced и SUMO отсутствует.
 
 ## 18. Epic E10 — SUMO/libsumo adapter
 

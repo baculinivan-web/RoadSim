@@ -1583,6 +1583,12 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "pollster",
+ "roadsim-backend-api",
+ "roadsim-backend-fake",
+ "roadsim-compiled-network",
+ "roadsim-compiler",
+ "roadsim-domain",
+ "roadsim-types",
  "winit",
 ]
 

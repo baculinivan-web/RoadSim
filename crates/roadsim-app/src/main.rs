@@ -1,4 +1,6 @@
+mod demo;
 mod shell;
+mod simulation;
 
 fn main() {
     if let Err(error) = shell::run() {

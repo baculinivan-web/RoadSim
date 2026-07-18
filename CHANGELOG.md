@@ -52,8 +52,8 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   и ruleset SHA-256; изменение любого hash наблюдаемо переводит exception в stale.
   Нормативные требования и трактовки в этот contract не включены.
 - Desktop entry point теперь открывает нативное `winit` окно, создаёт `wgpu`
-  surface через Metal/DX12/Vulkan и рисует первый `egui` shell со статическим
-  дорожным viewport, object tree, inspector и simulation placeholder.
+  surface через Metal/DX12/Vulkan и рисует первый `egui` shell с дорожным
+  viewport, object tree и inspector.
 - Добавлены backend-independent `roadsim-compiled-network` и первый staged
   `roadsim-compiler`: прямой corridor компилируется в compact lane arrays,
   source map, stable content hash и capability requirements; неподдерживаемые
@@ -61,6 +61,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлены versioned `roadsim-backend-api` и deterministic in-memory fake
   backend: capability preflight, distinct handshake/compile/runtime errors,
   pause/resume/cancel lifecycle и batched agent frames на integer ticks.
+- Desktop demo проходит полный Design Model → CSN → fake backend → frame overlay
+  путь; Start/Pause/Resume/Stop управляют наблюдаемым run, а native smoke требует
+  первый batch из 18 агентов, поэтому GPU-only false green больше невозможен.
 
 ### Changed
 

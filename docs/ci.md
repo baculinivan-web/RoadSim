@@ -17,7 +17,8 @@ Workflow `.github/workflows/ci.yml` запускается для pull request, 
    regression fixtures проверяются против `supply-chain/dependency-policy.toml`;
 3. **Build and smoke** — одна matrix собирает `roadsim-app`/`roadsim-cli`, затем
    desktop app создаёт окно, GPU surface и два UI frame на Ubuntu 24.04 под
-   Xvfb, Windows и macOS 14;
+   Xvfb, Windows и macOS 14; smoke auto-starts deterministic fake backend и
+   завершается успешно только после первого 18-agent simulation batch;
 4. **Dependencies, licenses, security, and SBOM** — `cargo-deny` отдельно
    проверяет bans/sources, лицензии и RustSec advisories, после чего публикуются
    CycloneDX и license/native inventory.

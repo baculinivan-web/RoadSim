@@ -12,6 +12,12 @@ egui.workspace = true
 egui-wgpu.workspace = true
 egui-winit.workspace = true
 pollster.workspace = true
+roadsim-backend-api = { version = "0.1.0", path = "../roadsim-backend-api" }
+roadsim-backend-fake = { version = "0.1.0", path = "../roadsim-backend-fake" }
+roadsim-compiled-network = { version = "0.1.0", path = "../roadsim-compiled-network" }
+roadsim-compiler = { version = "0.1.0", path = "../roadsim-compiler" }
+roadsim-domain = { version = "0.1.0", path = "../roadsim-domain" }
+roadsim-types = { version = "0.1.0", path = "../roadsim-types" }
 winit.workspace = true
 
 [lints]
