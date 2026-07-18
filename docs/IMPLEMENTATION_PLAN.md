@@ -409,6 +409,13 @@ lane graph, junctions и весь capability manifest остаются след�
 | E09-T09 | Common backend contract suite | T01–T08 | reusable tests | fake backend passes all cases |
 | E09-T10 | Resource/workdir management | T07 | bounded run directories | cleanup/recovery/incomplete marker tested |
 
+Статус E09-T01…T03/T09: 🟡 стабилизирован первый object-safe async contract и
+in-memory fake backend. Handshake, capability preflight, compile/runtime/
+unsupported errors, pause/resume/cancel, terminal semantics, bounded idempotency
+keys и deterministic frame batches покрыты contract/property tests; root seed
+substreams закреплены known vectors. Worker protocol, metric batching, watchdog,
+resource directories и общий suite для внешних backend остаются невыполненными.
+
 ## 18. Epic E10 — SUMO/libsumo adapter
 
 **Цель:** первый production backend без утечки SUMO semantics в продуктовую модель.

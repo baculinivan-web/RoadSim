@@ -1,0 +1,22 @@
+[package]
+name = "roadsim-backend-fake"
+description = "Deterministic in-memory RoadSim backend contract test double"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+libm.workspace = true
+roadsim-backend-api = { version = "0.1.0", path = "../roadsim-backend-api" }
+roadsim-compiled-network = { version = "0.1.0", path = "../roadsim-compiled-network" }
+roadsim-types = { version = "0.1.0", path = "../roadsim-types" }
+
+[dev-dependencies]
+pollster.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

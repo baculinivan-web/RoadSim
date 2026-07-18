@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crates/roadsim-app",
+    "crates/roadsim-backend-api",
+    "crates/roadsim-backend-fake",
     "crates/roadsim-cli",
     "crates/roadsim-commands",
     "crates/roadsim-compiled-network",
@@ -18,6 +20,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+async-trait = "0.1.89"
 egui = "0.33.3"
 egui-wgpu = { version = "0.33.3", features = ["winit", "x11"] }
 egui-winit = { version = "0.33.3", default-features = false, features = ["x11"] }

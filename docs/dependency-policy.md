@@ -156,3 +156,11 @@ build и проходят RustSec/license/source gates. `sha2` не исполь
 секретов или authentication; content hash является идентификатором детерминированного
 артефакта. Источники review: [sha2 0.10.9](https://docs.rs/crate/sha2/0.10.9),
 [libm 0.2.16](https://docs.rs/crate/libm/0.2.16).
+
+Для E09 backend trait добавлен `async-trait 0.1.89`. Он нужен только для
+object-safe `SimulationBackend`/`SimulationSession` boundaries на Rust 1.88;
+executor, I/O, threads, clock и network dependency crate не добавляет. Fake
+backend выполняет готовые in-memory futures через caller и не вводит application
+async runtime. Crate имеет `MIT OR Apache-2.0`, совместим с workspace MSRV и
+проходит RustSec/license/source gates. Источник review:
+[async-trait 0.1.89](https://docs.rs/crate/async-trait/0.1.89).

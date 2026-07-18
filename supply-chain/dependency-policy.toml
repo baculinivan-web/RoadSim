@@ -63,6 +63,22 @@ to = [
 rationale = "ARCHITECTURE §4: backend-api is a versioned contract and must not depend on desktop UI or an implementation"
 
 [[rules]]
+id = "fake-backend-is-ui-and-sumo-independent"
+from = ["roadsim-backend-fake"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-sumo",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "sumo-worker",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §10: the in-memory contract test double must remain deterministic and independent of UI and SUMO implementation details"
+
+[[rules]]
 id = "renderer-does-not-own-domain"
 from = ["roadsim-renderer"]
 to = ["roadsim-commands", "roadsim-domain"]

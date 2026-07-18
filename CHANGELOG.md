@@ -58,6 +58,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   `roadsim-compiler`: прямой corridor компилируется в compact lane arrays,
   source map, stable content hash и capability requirements; неподдерживаемые
   кривые/переменные сечения возвращают object-linked diagnostics.
+- Добавлены versioned `roadsim-backend-api` и deterministic in-memory fake
+  backend: capability preflight, distinct handshake/compile/runtime errors,
+  pause/resume/cancel lifecycle и batched agent frames на integer ticks.
 
 ### Changed
 

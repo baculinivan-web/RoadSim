@@ -21,6 +21,10 @@ simulation backend ещё не подключены.
 отдельный immutable Compiled Simulation Network. Кривые и переменный профиль на
 этом этапе отклоняются явной diagnostic, а не упрощаются молча.
 
+Для тестирования backend boundary есть deterministic in-memory backend с явным
+seed, capability preflight и lifecycle; desktop controls подключаются следующим
+срезом. Это test backend, а не скрытая замена SUMO.
+
 ## Source of truth
 
 Перед изменением кода полностью прочитайте документы в следующем порядке:

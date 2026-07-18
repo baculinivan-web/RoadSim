@@ -187,6 +187,7 @@ impl LaneTable {
                 .iter()
                 .chain(&ends)
                 .any(|point| !point.x_m().is_finite() || !point.y_m().is_finite())
+            || starts.iter().zip(&ends).any(|(start, end)| start == end)
             || widths_m
                 .iter()
                 .any(|width| !width.is_finite() || *width <= 0.0)
@@ -416,6 +417,15 @@ mod tests {
             LaneTable::new(
                 vec![point],
                 vec![point],
+                vec![3.5],
+                vec![CompiledLaneUse::GeneralTraffic],
+            )
+            .is_none()
+        );
+        assert!(
+            LaneTable::new(
+                vec![point],
+                vec![CompiledPoint::new(1.0, 0.0)],
                 vec![0.0],
                 vec![CompiledLaneUse::GeneralTraffic],
             )

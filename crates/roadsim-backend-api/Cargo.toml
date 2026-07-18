@@ -1,0 +1,17 @@
+[package]
+name = "roadsim-backend-api"
+description = "Versioned backend-independent RoadSim simulation lifecycle contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+roadsim-compiled-network = { version = "0.1.0", path = "../roadsim-compiled-network" }
+roadsim-types = { version = "0.1.0", path = "../roadsim-types" }
+serde.workspace = true
+
+[lints]
+workspace = true
