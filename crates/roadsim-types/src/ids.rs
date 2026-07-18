@@ -75,6 +75,7 @@ pub enum ObjectKind {
     DemandFlow,
     Scenario,
     Experiment,
+    RuleException,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -115,3 +116,4 @@ typed_id!(DemandProfileId, DemandProfile);
 typed_id!(DemandFlowId, DemandFlow);
 typed_id!(ScenarioId, Scenario);
 typed_id!(ExperimentId, Experiment);
+typed_id!(RuleExceptionId, RuleException);

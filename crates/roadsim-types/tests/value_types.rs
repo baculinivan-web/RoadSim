@@ -1,8 +1,8 @@
 use roadsim_types::{
     AngleRadians, CoordinateMeters, CorridorId, CurvaturePerMeter, CurvatureTolerancePerMeter,
     DurationSeconds, FlowRatePerHour, HeadingRadians, LaneId, LengthMeters, ObjectKind, ObjectRef,
-    ProjectId, RailAlignmentId, RootSeed, SidewalkId, SimulationTick, SpeedMetersPerSecond,
-    ToleranceMeters, ValueErrorCode, WalkingAreaId,
+    ProjectId, RailAlignmentId, RootSeed, Sha256Digest, SidewalkId, SimulationTick,
+    SpeedMetersPerSecond, ToleranceMeters, ValueErrorCode, WalkingAreaId,
 };
 
 #[test]
@@ -155,4 +155,17 @@ fn root_seed_is_explicit_and_round_trips_without_a_default() {
     let encoded = serde_json::to_string(&seed).unwrap();
     assert_eq!(encoded, u64::MAX.to_string());
     assert_eq!(serde_json::from_str::<RootSeed>(&encoded).unwrap(), seed);
+}
+
+#[test]
+fn sha256_digest_has_one_canonical_wire_encoding() {
+    let digest = Sha256Digest::from_bytes([0xab; 32]);
+    let encoded = serde_json::to_string(&digest).unwrap();
+    assert_eq!(encoded, format!("\"{}\"", "ab".repeat(32)));
+    assert_eq!(
+        serde_json::from_str::<Sha256Digest>(&encoded).unwrap(),
+        digest
+    );
+    assert!(serde_json::from_str::<Sha256Digest>(&format!("\"{}\"", "AB".repeat(32))).is_err());
+    assert!(serde_json::from_str::<Sha256Digest>("\"1234\"").is_err());
 }

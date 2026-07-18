@@ -240,7 +240,7 @@ remote, поэтому это evidence пока невозможно получ�
 | E01-T06 | ✅ Готово | Junction, crossing, sidewalk, rail semantics | T05 | domain entities | ссылки типизированы; dangling refs диагностируются |
 | E01-T07 | ✅ Готово | Traffic control model | T06 | signs/markings/signals/controllers | phase invariants и object refs тестируются |
 | E01-T08 | ✅ Готово | Demand/scenario/experiment skeleton | T03 | domain types без engine logic | явные units/intervals/seed policy |
-| E01-T09 | Не начато | Rule configuration/exceptions model | T03 | pins/exceptions | stale hash semantics покрыта тестом |
+| E01-T09 | ✅ Готово | Rule configuration/exceptions model | T03 | pins/exceptions | stale hash semantics покрыта тестом |
 | E01-T10 | Не начато | Semantic project hash | T01–T09 | canonical content hashing | UI/cache/order не меняют hash |
 
 **Особое review:** геометрические типы и единицы должны быть одобрены до массового появления API. Иначе изменение распространяется на storage, renderer и backend.

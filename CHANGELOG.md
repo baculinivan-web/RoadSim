@@ -48,6 +48,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлен project-level skeleton интервального demand, scenarios и experiments:
   rates имеют явную единицу «в час», timing разделяет warm-up/duration/step/output
   sampling, а каждый одиночный run и replication получает явный root seed.
+- Добавлены exact ruleset pins и аудируемые rule exceptions, привязанные к object
+  и ruleset SHA-256; изменение любого hash наблюдаемо переводит exception в stale.
+  Нормативные требования и трактовки в этот contract не включены.
 
 ### Changed
 

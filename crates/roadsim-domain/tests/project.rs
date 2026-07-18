@@ -1,9 +1,9 @@
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, CrsDefinition, CrsProvenance, DomainErrorCode,
     EngineeringCrsDescriptor, EngineeringUnit, LocalOrigin, Project, ProjectMetadata,
-    VerticalDatum,
+    RuleConfiguration, RulesetPin, VerticalDatum,
 };
-use roadsim_types::{CoordinateMeters, ProjectId};
+use roadsim_types::{CoordinateMeters, ProjectId, Sha256Digest};
 
 fn sample_project() -> Project {
     let source = CrsDefinition::Authority(AuthorityCrs::new("EPSG", "4326").unwrap());
@@ -45,6 +45,29 @@ fn complete_project_metadata_and_crs_round_trip() {
     assert!(json.contains("\"design_catalog\""));
     assert!(project.design_catalog().corridors().is_empty());
     assert_eq!(serde_json::from_str::<Project>(&json).unwrap(), project);
+}
+
+#[test]
+fn project_round_trip_preserves_exact_ruleset_pin() {
+    let pin = RulesetPin::new(
+        "RU-baseline",
+        "RU-2026.07.0",
+        Sha256Digest::from_bytes([7; 32]),
+    )
+    .unwrap();
+    let project = sample_project()
+        .with_rule_configuration(RuleConfiguration::new(Some(pin), vec![]).unwrap());
+    let encoded = serde_json::to_string(&project).unwrap();
+    let decoded: Project = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, project);
+    assert_eq!(
+        decoded
+            .rule_configuration()
+            .ruleset_pin()
+            .unwrap()
+            .exact_version(),
+        "RU-2026.07.0"
+    );
 }
 
 #[test]

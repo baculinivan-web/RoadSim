@@ -1,4 +1,4 @@
-use crate::{DesignCatalog, ScenarioError, StudyCatalog};
+use crate::{DesignCatalog, RuleConfiguration, ScenarioError, StudyCatalog};
 use roadsim_types::{CoordinateMeters, ProjectId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{error::Error, fmt};
@@ -403,6 +403,7 @@ pub struct Project {
     coordinate_reference: CoordinateReference,
     design_catalog: DesignCatalog,
     study_catalog: StudyCatalog,
+    rule_configuration: RuleConfiguration,
 }
 
 impl Project {
@@ -418,6 +419,7 @@ impl Project {
             coordinate_reference,
             design_catalog: DesignCatalog::empty(),
             study_catalog: StudyCatalog::empty(),
+            rule_configuration: RuleConfiguration::unconfigured(),
         }
     }
 
@@ -434,6 +436,7 @@ impl Project {
             coordinate_reference,
             design_catalog,
             study_catalog: StudyCatalog::empty(),
+            rule_configuration: RuleConfiguration::unconfigured(),
         }
     }
 
@@ -444,6 +447,12 @@ impl Project {
         study_catalog.validate_against(&self.design_catalog)?;
         self.study_catalog = study_catalog;
         Ok(self)
+    }
+
+    #[must_use]
+    pub fn with_rule_configuration(mut self, rule_configuration: RuleConfiguration) -> Self {
+        self.rule_configuration = rule_configuration;
+        self
     }
 
     #[must_use]
@@ -470,6 +479,11 @@ impl Project {
     pub const fn study_catalog(&self) -> &StudyCatalog {
         &self.study_catalog
     }
+
+    #[must_use]
+    pub const fn rule_configuration(&self) -> &RuleConfiguration {
+        &self.rule_configuration
+    }
 }
 
 impl<'de> Deserialize<'de> for Project {
@@ -485,6 +499,8 @@ impl<'de> Deserialize<'de> for Project {
             design_catalog: DesignCatalog,
             #[serde(default)]
             study_catalog: StudyCatalog,
+            #[serde(default)]
+            rule_configuration: RuleConfiguration,
         }
         let wire = Wire::deserialize(deserializer)?;
         Self::with_catalog(
@@ -494,6 +510,7 @@ impl<'de> Deserialize<'de> for Project {
             wire.design_catalog,
         )
         .with_study_catalog(wire.study_catalog)
+        .map(|project| project.with_rule_configuration(wire.rule_configuration))
         .map_err(serde::de::Error::custom)
     }
 }

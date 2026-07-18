@@ -9,13 +9,14 @@ use roadsim_domain::{
     DemandEndpoint, DemandFlow, DemandInterval, DemandMode, DemandProfile, DesignCatalog,
     EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
     LocalOrigin, Point2Meters, Project, ProjectMetadata, RailAlignment, ReferenceLine,
-    ReferenceLineElement, ReferenceLinePose, Scenario, ScenarioTiming, Sidewalk, StopLine,
-    StudyCatalog, TrafficControlCatalog, TrafficSign, VerticalDatum,
+    ReferenceLineElement, ReferenceLinePose, RuleConfiguration, RulesetPin, Scenario,
+    ScenarioTiming, Sidewalk, StopLine, StudyCatalog, TrafficControlCatalog, TrafficSign,
+    VerticalDatum,
 };
 use roadsim_types::{
     CoordinateMeters, CorridorId, DemandFlowId, DemandProfileId, DurationSeconds, FlowRatePerHour,
     HeadingRadians, LaneId, LengthMeters, ProjectId, RailAlignmentId, RootSeed, ScenarioId,
-    SidewalkId, StopLineId, TrafficSignId,
+    Sha256Digest, SidewalkId, StopLineId, TrafficSignId,
 };
 use std::num::NonZeroUsize;
 
@@ -541,6 +542,20 @@ fn corridor_commands_preserve_unmodified_multimodal_entities() {
         project.metadata().clone(),
         project.coordinate_reference().clone(),
         catalog,
+    )
+    .with_rule_configuration(
+        RuleConfiguration::new(
+            Some(
+                RulesetPin::new(
+                    "RU-baseline",
+                    "RU-2026.07.0",
+                    Sha256Digest::from_bytes([7; 32]),
+                )
+                .unwrap(),
+            ),
+            vec![],
+        )
+        .unwrap(),
     );
     let mut state = ModelState::new(project);
 
@@ -563,6 +578,15 @@ fn corridor_commands_preserve_unmodified_multimodal_entities() {
             .stop_lines()[0]
             .id(),
         StopLineId::from_u128(72)
+    );
+    assert_eq!(
+        state
+            .project()
+            .rule_configuration()
+            .ruleset_pin()
+            .unwrap()
+            .exact_version(),
+        "RU-2026.07.0"
     );
 }
 

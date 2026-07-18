@@ -12,7 +12,9 @@ commands с bounded undo/redo, а также первые junction/pedestrian/ra
 Design Model также содержит минимальные traffic-control contracts для знаков,
 разметки, стоп-линий и фиксированных сигнальных программ, а project root —
 интервальный demand и воспроизводимые scenario/experiment definitions.
-Интерактивный редактор и simulation backend ещё не реализованы.
+Project также хранит exact ruleset pin и hash-bound audited exceptions без
+встроенной трактовки нормативных требований. Интерактивный редактор и simulation
+backend ещё не реализованы.
 
 ## Source of truth
 

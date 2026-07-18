@@ -9,14 +9,17 @@
 //! select_lane(CorridorId::from_u128(1));
 //! ```
 
+mod hashes;
 mod ids;
 mod units;
 
+pub use hashes::Sha256Digest;
+
 pub use ids::{
     CorridorId, CrossingId, DemandFlowId, DemandProfileId, ExperimentId, JunctionId, LaneId,
-    ObjectKind, ObjectRef, ProjectId, RailAlignmentId, RoadMarkingId, ScenarioId, SidewalkId,
-    SignalControllerId, SignalGroupId, SignalHeadId, SignalPhaseId, SignalProgramId, StopLineId,
-    TrafficSignId, WalkingAreaId,
+    ObjectKind, ObjectRef, ProjectId, RailAlignmentId, RoadMarkingId, RuleExceptionId, ScenarioId,
+    SidewalkId, SignalControllerId, SignalGroupId, SignalHeadId, SignalPhaseId, SignalProgramId,
+    StopLineId, TrafficSignId, WalkingAreaId,
 };
 pub use units::{
     AngleRadians, CoordinateMeters, CurvaturePerMeter, CurvatureTolerancePerMeter, DurationSeconds,

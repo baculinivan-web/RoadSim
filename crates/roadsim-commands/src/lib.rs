@@ -379,6 +379,7 @@ fn rebuild_project(project: &Project, catalog: DesignCatalog) -> Result<Project,
         catalog,
     )
     .with_study_catalog(project.study_catalog().clone())
+    .map(|rebuilt| rebuilt.with_rule_configuration(project.rule_configuration().clone()))
     .map_err(|error| {
         CommandError::new(
             CommandErrorCode::DomainInvariant,
