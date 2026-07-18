@@ -39,6 +39,7 @@
 | ADR-013 | Python SDK управляет headless API и анализом, но не вызывается на каждый tick | принято после MVP |
 | ADR-014 | Детерминизм — часть контрактов данных, scheduler и tests | принято |
 | ADR-015 | Основной код — Apache-2.0 OR MIT; лицензионный review дистрибуции обязателен | предварительно |
+| ADR-016 | Reference line — chained line/arc/linear-curvature authoring contract | принято |
 
 Новые решения оформляются отдельными ADR в `docs/adr/NNNN-title.md`: context, options, decision, consequences, migration.
 
@@ -840,7 +841,8 @@ CSN и metrics должны быть пригодны обоим backend. Backen
 - ADR-Q02: wire schema — Protobuf vs иной schema-first формат;
 - ADR-Q03: cross-platform local IPC abstraction;
 - ADR-Q04: JSON canonicalization и extension preservation;
-- ADR-Q05: конкретные geometry algorithms/tolerances;
+- ADR-Q05: остальные geometry algorithms/tolerances после частичного решения
+  authoring contract в ADR-016;
 - ADR-Q06: policy распределения SUMO и EPL-2.0 по платформам;
 - ADR-Q07: формат ruleset artifact и подпись;
 - ADR-Q08: egui docking library или собственная раскладка;

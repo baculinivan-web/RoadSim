@@ -92,7 +92,18 @@ degree/foot. Domain text limits ограничивают состояние мо
 byte/depth limits недоверенного документа остаются обязанностью `E03` storage
 boundary.
 
+Для property-based acceptance E01-T04 принят `proptest 1.11.0` только как
+`dev-dependency` `roadsim-domain`. Default features отключены; включена только
+feature `std`, поэтому fork/timeout/tempfile test-process capabilities не входят в
+выбранный graph. Upstream указывает MSRV 1.85 и лицензию `MIT OR Apache-2.0`;
+production crates не получают runtime dependency, RNG или I/O через этот test
+framework. Генератор используется только для ограниченных finite inputs, а его
+случайный seed не участвует в model behavior или serialized data. Версия
+зафиксирована общим workspace requirement и `Cargo.lock`; `cargo deny` проверяет
+полный transitive graph.
+
 Источники review: [Serde](https://docs.rs/crate/serde/1.0.228),
 [UUID](https://docs.rs/crate/uuid/1.24.0),
 [unicode-ident metadata](https://docs.rs/crate/unicode-ident/1.0.24/source/Cargo.toml),
 [Unicode License v3](https://spdx.org/licenses/Unicode-3.0.html).
+[Proptest](https://docs.rs/crate/proptest/1.11.0).

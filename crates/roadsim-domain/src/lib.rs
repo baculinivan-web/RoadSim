@@ -5,9 +5,15 @@
 //! limits therefore remain mandatory at the storage boundary (`E03`).
 
 mod project;
+mod reference_line;
 
 pub use project::{
     AuthorityCrs, AxisOrder, CoordinateReference, CrsDefinition, CrsProvenance, DomainError,
     DomainErrorCode, EngineeringCrsDescriptor, EngineeringUnit, LocalOrigin, NamedVerticalDatum,
     Project, ProjectMetadata, VerticalDatum, WktCrs,
+};
+pub use reference_line::{
+    BoundaryContinuity, CircularArcSegment, LineSegment, LinearCurvatureTransition, Point2Meters,
+    ReferenceLine, ReferenceLineBoundary, ReferenceLineElement, ReferenceLineElementKind,
+    ReferenceLineError, ReferenceLineErrorCode, ReferenceLinePose, StationRange,
 };

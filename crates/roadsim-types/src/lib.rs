@@ -16,6 +16,7 @@ pub use ids::{
     CorridorId, CrossingId, JunctionId, LaneId, ObjectKind, ObjectRef, ProjectId, ScenarioId,
 };
 pub use units::{
-    AngleRadians, CoordinateMeters, DurationSeconds, LengthMeters, SimulationTick,
-    SpeedMetersPerSecond, ToleranceMeters, ValueError, ValueErrorCode,
+    AngleRadians, CoordinateMeters, CurvaturePerMeter, CurvatureTolerancePerMeter, DurationSeconds,
+    HeadingRadians, LengthMeters, SimulationTick, SpeedMetersPerSecond, ToleranceMeters,
+    ValueError, ValueErrorCode,
 };

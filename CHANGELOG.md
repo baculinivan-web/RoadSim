@@ -27,6 +27,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлен корневой domain contract проекта с обязательными CRS, local origin,
   axis order, vertical datum и provenance; degree/foot declared engineering
   units отклоняются стабильным diagnostic code.
+- Добавлен backend-independent reference-line contract для line, signed-curvature
+  arc и linear-curvature transition с canonical heading, производными station
+  ranges и явной классификацией boundary continuity.
 
 ### Changed
 
@@ -43,3 +46,6 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Ограничен размер текста, принимаемого domain-моделью; invariants finite values,
   bounded text и declared metric engineering CRS повторно проверяются при
   deserialize. Pre-allocation parser limits остаются частью E03 storage boundary.
+- Reference-line constructors и deserialization отклоняют нулевые/вырожденные
+  primitives, non-finite angular change, station overflow и потерю представимого
+  station increment; tolerance непрерывности всегда передаётся вызывающей стороной.

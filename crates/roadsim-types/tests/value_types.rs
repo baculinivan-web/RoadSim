@@ -1,6 +1,7 @@
 use roadsim_types::{
-    AngleRadians, CoordinateMeters, CorridorId, DurationSeconds, LaneId, LengthMeters, ObjectKind,
-    ObjectRef, ProjectId, SimulationTick, SpeedMetersPerSecond, ToleranceMeters, ValueErrorCode,
+    AngleRadians, CoordinateMeters, CorridorId, CurvaturePerMeter, CurvatureTolerancePerMeter,
+    DurationSeconds, HeadingRadians, LaneId, LengthMeters, ObjectKind, ObjectRef, ProjectId,
+    SimulationTick, SpeedMetersPerSecond, ToleranceMeters, ValueErrorCode,
 };
 
 #[test]
@@ -33,6 +34,14 @@ fn scalar_types_reject_non_finite_and_domain_invalid_values() {
             AngleRadians::try_new(value).unwrap_err().code(),
             ValueErrorCode::NonFinite
         );
+        assert_eq!(
+            CurvaturePerMeter::try_new(value).unwrap_err().code(),
+            ValueErrorCode::NonFinite
+        );
+        assert_eq!(
+            HeadingRadians::try_new(value).unwrap_err().code(),
+            ValueErrorCode::NonFinite
+        );
     }
 
     assert_eq!(
@@ -53,11 +62,49 @@ fn scalar_types_reject_non_finite_and_domain_invalid_values() {
     );
     assert_eq!(LengthMeters::try_new(0.0).unwrap().get(), 0.0);
     assert_eq!(ToleranceMeters::try_new(0.0).unwrap().get(), 0.0);
+    assert_eq!(CurvaturePerMeter::try_new(-0.1).unwrap().get(), -0.1);
+    assert_eq!(
+        CurvatureTolerancePerMeter::try_new(-0.1)
+            .unwrap_err()
+            .code(),
+        ValueErrorCode::Negative
+    );
     assert!(
         CoordinateMeters::try_new(-0.0)
             .unwrap()
             .get()
             .is_sign_positive()
+    );
+}
+
+#[test]
+fn headings_have_one_canonical_full_turn_representation() {
+    let tau = std::f64::consts::TAU;
+    assert_eq!(HeadingRadians::try_new(0.0).unwrap().get(), 0.0);
+    assert_eq!(HeadingRadians::try_new(-0.0).unwrap().get(), 0.0);
+    assert_eq!(HeadingRadians::try_new(tau).unwrap().get(), 0.0);
+    assert_eq!(HeadingRadians::try_new(-tau).unwrap().get(), 0.0);
+    for tiny_negative in [-f64::EPSILON, -f64::MIN_POSITIVE, -f64::from_bits(1)] {
+        let heading = HeadingRadians::try_new(tiny_negative).unwrap();
+        assert!(heading.get() >= 0.0);
+        assert!(heading.get() < tau);
+        let json = serde_json::to_string(&heading).unwrap();
+        assert_eq!(
+            serde_json::from_str::<HeadingRadians>(&json).unwrap(),
+            heading
+        );
+    }
+    assert_eq!(
+        HeadingRadians::try_new(-std::f64::consts::FRAC_PI_2)
+            .unwrap()
+            .get(),
+        3.0 * std::f64::consts::FRAC_PI_2
+    );
+    assert_eq!(
+        serde_json::from_str::<HeadingRadians>(&tau.to_string())
+            .unwrap()
+            .get(),
+        0.0
     );
 }
 

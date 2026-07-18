@@ -91,6 +91,51 @@ finite_scalar!(SpeedMetersPerSecond, true);
 finite_scalar!(DurationSeconds, true);
 finite_scalar!(AngleRadians, false);
 finite_scalar!(ToleranceMeters, true);
+finite_scalar!(CurvaturePerMeter, false);
+finite_scalar!(CurvatureTolerancePerMeter, true);
+
+/// A canonical planar heading in radians in the half-open range `[0, 2π)`.
+///
+/// Unlike [`AngleRadians`], a heading describes an orientation rather than a
+/// signed rotation. Canonicalization ensures equivalent full-turn orientations
+/// have one serialized representation for future semantic hashing.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct HeadingRadians(f64);
+
+impl HeadingRadians {
+    pub fn try_new(value: f64) -> Result<Self, ValueError> {
+        if !value.is_finite() {
+            return Err(ValueError {
+                code: ValueErrorCode::NonFinite,
+                value_type: stringify!(HeadingRadians),
+            });
+        }
+        let value = value.rem_euclid(std::f64::consts::TAU);
+        // `rem_euclid` can round a tiny negative input up to exactly `TAU`.
+        // Preserve the documented half-open range and one full-turn encoding.
+        Ok(Self(if value == 0.0 || value >= std::f64::consts::TAU {
+            0.0
+        } else {
+            value
+        }))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for HeadingRadians {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = f64::deserialize(deserializer)?;
+        Self::try_new(value).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
