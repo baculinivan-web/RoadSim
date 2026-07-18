@@ -1,0 +1,57 @@
+# Desired-state catalog. Apply through repository administration after hosting is
+# configured; template references must use these exact stable names.
+- name: work-packet
+  color: "1D76DB"
+  description: Один ограниченный проверяемый результат
+
+- name: "status:needs-triage"
+  color: "D4C5F9"
+  description: Требует проверки scope, dependencies и reviewers
+
+- name: "status:blocked"
+  color: "B60205"
+  description: Не может продолжаться без зафиксированного внешнего решения
+
+- name: "area:domain"
+  color: "0E8A16"
+  description: Design Model, commands, units и identity
+
+- name: "area:geometry"
+  color: "0E8A16"
+  description: Geometry kernel, topology и CSN geometry
+
+- name: "area:storage"
+  color: "0E8A16"
+  description: Project schema, migrations и .roadsim container
+
+- name: "area:worker"
+  color: "0E8A16"
+  description: Backend API, IPC и worker lifecycle
+
+- name: "area:rules"
+  color: "0E8A16"
+  description: Rules API, ruleset, coverage и domain review
+
+- name: "area:ui"
+  color: "0E8A16"
+  description: Desktop shell, editor UX и renderer
+
+- name: "review:architecture"
+  color: "FBCA04"
+  description: Требуется architecture review
+
+- name: "review:domain"
+  color: "FBCA04"
+  description: Требуется domain-owner review
+
+- name: "review:security"
+  color: "FBCA04"
+  description: Требуется security review
+
+- name: "review:license"
+  color: "FBCA04"
+  description: Требуется license review
+
+- name: breaking-change
+  color: "B60205"
+  description: Меняет versioned public contract и требует migration policy

@@ -1,0 +1,117 @@
+name: Work packet
+description: Один проверяемый результат, связанный с требованиями и task ID
+title: "[WP-E00-00]: "
+labels:
+  - work-packet
+  - "status:needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Перед заполнением прочитайте `docs/PROJECT_SPEC.md`,
+        `docs/ARCHITECTURE.md`, `docs/IMPLEMENTATION_PLAN.md` и `AGENTS.md`.
+
+  - type: input
+    id: packet_id
+    attributes:
+      label: Work packet ID
+      description: Стабильный ID вида WP-E<epic>-<number>.
+      placeholder: WP-E01-01
+    validations:
+      required: true
+
+  - type: input
+    id: source_requirements
+    attributes:
+      label: Source requirements
+      description: Связанные FR, NFR, ADR и E*-T* через запятую.
+      placeholder: FR-002, ADR-001, E01-T01
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_in
+    attributes:
+      label: Scope in
+      description: Что точно входит в этот packet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope_out
+    attributes:
+      label: Scope out
+      description: Что намеренно не реализуется.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Merged tasks, schemas, contracts или стабильные test doubles.
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected_areas
+    attributes:
+      label: Affected areas
+      description: Crates, schemas, fixtures, workers и docs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Deliverables
+      description: Code, tests, docs и data, которые появятся в PR.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Наблюдаемые критерии, а не формулировка «код написан».
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_commands
+    attributes:
+      label: Test commands and CI jobs
+      description: Точные команды и platform/corpus/golden jobs.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks
+      description: Determinism, security, licensing, data loss и performance.
+    validations:
+      required: true
+
+  - type: input
+    id: reviewers
+    attributes:
+      label: Required reviewers
+      description: Domain, architecture, security, license, UX по необходимости.
+      placeholder: architecture, security
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Definition of Ready
+      options:
+        - label: Dependencies merged или предоставлен стабильный contract/test double.
+          required: true
+        - label: Необходимые ADR, domain-owner и license решения определены.
+          required: true
+        - label: Fixtures/test data доступны и имеют понятное происхождение.
+          required: true
