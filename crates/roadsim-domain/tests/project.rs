@@ -42,6 +42,8 @@ fn complete_project_metadata_and_crs_round_trip() {
     let json = serde_json::to_string_pretty(&project).unwrap();
     assert!(json.contains("\"declared_unit\": \"metre\""));
     assert!(json.contains("\"east_m\": 413000.25"));
+    assert!(json.contains("\"design_catalog\""));
+    assert!(project.design_catalog().corridors().is_empty());
     assert_eq!(serde_json::from_str::<Project>(&json).unwrap(), project);
 }
 

@@ -10,6 +10,11 @@ canonical model schema появятся только в E03. Boundary cases на
 line/arc/linear-curvature inputs; сторонние данные и лицензируемые материалы не
 используются.
 
+E01-T05 аналогично использует аналитический двухсторонний corridor и generated
+monotonic station profiles в `crates/roadsim-domain/tests/corridor.rs`. Постоянные
+widths заданы в метрах; serialized fixture появится только вместе с versioned
+project schema E03.
+
 При добавлении fixture рядом должен быть указан источник, лицензия, units,
 ожидаемый результат и процедура осознанного обновления. Golden output нельзя
 перезаписывать обычным test run.

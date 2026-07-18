@@ -407,6 +407,10 @@ pub struct StationRange {
 }
 
 impl StationRange {
+    pub(crate) fn new(start: LengthMeters, end: LengthMeters) -> Self {
+        Self { start, end }
+    }
+
     #[must_use]
     pub const fn start(self) -> LengthMeters {
         self.start

@@ -236,7 +236,7 @@ remote, поэтому это evidence пока невозможно получ�
 | E01-T02 | ✅ Готово | Единицы, ticks, tolerances | T01 | typed length/speed/time/angle | locale-independent serialization; invalid finite values rejected |
 | E01-T03 | ✅ Готово | Project metadata и CRS descriptor | T01–T02 | project root types | CRS/unit/provenance обязательны |
 | E01-T04 | ✅ Готово | Reference line primitives | T02 | line/arc/transition API | continuity/property tests на границах |
-| E01-T05 | Не начато | Corridor и cross-section model | T03–T04 | roads, profile sections, lane semantics | типовой подход описывается без meshes/backend IDs |
+| E01-T05 | ✅ Готово | Corridor и cross-section model | T03–T04 | roads, profile sections, lane semantics | типовой подход описывается без meshes/backend IDs |
 | E01-T06 | Не начато | Junction, crossing, sidewalk, rail semantics | T05 | domain entities | ссылки типизированы; dangling refs диагностируются |
 | E01-T07 | Не начато | Traffic control model | T06 | signs/markings/signals/controllers | phase invariants и object refs тестируются |
 | E01-T08 | Не начато | Demand/scenario/experiment skeleton | T03 | domain types без engine logic | явные units/intervals/seed policy |

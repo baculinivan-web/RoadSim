@@ -4,8 +4,14 @@
 //! allocate its input string before validation. Container and parser byte/depth
 //! limits therefore remain mandatory at the storage boundary (`E03`).
 
+mod corridor;
 mod project;
 mod reference_line;
+
+pub use corridor::{
+    Corridor, CorridorError, CorridorErrorCode, CrossSectionLayout, CrossSectionProfile,
+    CrossSectionSection, DesignCatalog, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
+};
 
 pub use project::{
     AuthorityCrs, AxisOrder, CoordinateReference, CrsDefinition, CrsProvenance, DomainError,

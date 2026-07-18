@@ -30,6 +30,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлен backend-independent reference-line contract для line, signed-curvature
   arc и linear-curvature transition с canonical heading, производными station
   ranges и явной классификацией boundary continuity.
+- Добавлена corridor/cross-section Design Model: corridor-local lane catalog,
+  stable lane IDs, semantic direction/use, ordered left/right lane slices и
+  piecewise-constant widths по station без meshes или backend IDs.
 
 ### Changed
 
@@ -49,3 +52,6 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Reference-line constructors и deserialization отклоняют нулевые/вырожденные
   primitives, non-finite angular change, station overflow и потерю представимого
   station increment; tolerance непрерывности всегда передаётся вызывающей стороной.
+- Corridor validation повторно проверяется при deserialization и отклоняет
+  dangling/duplicate lane references, нулевые widths, неупорядоченные или выходящие
+  за reference line sections и непредставимую суммарную ширину.

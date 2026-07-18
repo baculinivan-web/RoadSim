@@ -1,3 +1,4 @@
+use crate::DesignCatalog;
 use roadsim_types::{CoordinateMeters, ProjectId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{error::Error, fmt};
@@ -400,6 +401,7 @@ pub struct Project {
     id: ProjectId,
     metadata: ProjectMetadata,
     coordinate_reference: CoordinateReference,
+    design_catalog: DesignCatalog,
 }
 
 impl Project {
@@ -413,6 +415,22 @@ impl Project {
             id,
             metadata,
             coordinate_reference,
+            design_catalog: DesignCatalog::empty(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_catalog(
+        id: ProjectId,
+        metadata: ProjectMetadata,
+        coordinate_reference: CoordinateReference,
+        design_catalog: DesignCatalog,
+    ) -> Self {
+        Self {
+            id,
+            metadata,
+            coordinate_reference,
+            design_catalog,
         }
     }
 
@@ -429,5 +447,10 @@ impl Project {
     #[must_use]
     pub const fn coordinate_reference(&self) -> &CoordinateReference {
         &self.coordinate_reference
+    }
+
+    #[must_use]
+    pub const fn design_catalog(&self) -> &DesignCatalog {
+        &self.design_catalog
     }
 }
