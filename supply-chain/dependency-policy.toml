@@ -34,6 +34,22 @@ to = [
 rationale = "ARCHITECTURE §4: compiled-network must not depend on mutable Design Model types or a backend implementation"
 
 [[rules]]
+id = "compiler-is-ui-and-backend-independent"
+from = ["roadsim-compiler"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-*",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "sumo-worker",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4/§8: compiler transforms an immutable Design snapshot into backend-independent CSN without UI or backend implementation dependencies"
+
+[[rules]]
 id = "backend-api-is-ui-independent"
 from = ["roadsim-backend-api"]
 to = [

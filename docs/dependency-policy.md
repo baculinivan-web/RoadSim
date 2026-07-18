@@ -139,3 +139,20 @@ RUSTSEC-2024-0436 (`paste`, build-time Metal bindings) и RUSTSEC-2026-0192
 [egui 0.33.3](https://docs.rs/crate/egui/0.33.3),
 [RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436),
 [RUSTSEC-2026-0192](https://rustsec.org/advisories/RUSTSEC-2026-0192).
+
+## Review CSN compiler dependencies
+
+Для минимального E07 compiler slice добавлены две pure-Rust зависимости без
+filesystem/network/process/clock доступа:
+
+- `sha2 0.10.9` вычисляет канонический SHA-256 content hash CSN из явно
+  упорядоченных bytes; алгоритм и порядок полей закреплены тестовым вектором;
+- `libm 0.2.16` вычисляет `sin/cos` straight-reference pose одинаковой
+  реализацией вместо platform libc, чтобы compiled coordinates и hash не зависели
+  от системной math library.
+
+Обе версии совместимы с Rust 1.88, имеют `MIT OR Apache-2.0`, не требуют native
+build и проходят RustSec/license/source gates. `sha2` не используется для
+секретов или authentication; content hash является идентификатором детерминированного
+артефакта. Источники review: [sha2 0.10.9](https://docs.rs/crate/sha2/0.10.9),
+[libm 0.2.16](https://docs.rs/crate/libm/0.2.16).

@@ -3,6 +3,8 @@ members = [
     "crates/roadsim-app",
     "crates/roadsim-cli",
     "crates/roadsim-commands",
+    "crates/roadsim-compiled-network",
+    "crates/roadsim-compiler",
     "crates/roadsim-domain",
     "crates/roadsim-types",
 ]
@@ -19,10 +21,12 @@ publish = false
 egui = "0.33.3"
 egui-wgpu = { version = "0.33.3", features = ["winit", "x11"] }
 egui-winit = { version = "0.33.3", default-features = false, features = ["x11"] }
+libm = "0.2.16"
 pollster = "0.4.0"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha2 = "0.10.9"
 uuid = { version = "1.24.0", features = ["serde"] }
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "x11"] }
 

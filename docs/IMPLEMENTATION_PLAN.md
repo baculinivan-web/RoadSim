@@ -362,6 +362,13 @@ property test восстановления semantic project реализован
 | E07-T11 | Compiler diagnostics/source map | T02–T09 | user diagnostics | ≥95% fixture errors have Design object ref; remainder classified global |
 | E07-T12 | Compiler benchmarks | T03–T10 | baseline | MVP intersection ≤2s acceptance target |
 
+Статус E07-T01…T03/T09: 🟡 опубликован минимальный immutable CSN contract и
+атомарный compiler slice для straight corridor с одним постоянным cross-section.
+Compact lane arrays, source map, stable SHA-256 content hash и первые capability
+IDs покрыты unit/regression/property tests. Arc/transition и переменный профиль
+явно блокируются diagnostics с Design object refs; полноценная curve evaluation,
+lane graph, junctions и весь capability manifest остаются следующими задачами.
+
 ## 16. Epic E08 — Нормативный движок RU
 
 **Цель:** versioned, testable rules without false compliance claims.

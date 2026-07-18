@@ -54,6 +54,10 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Desktop entry point теперь открывает нативное `winit` окно, создаёт `wgpu`
   surface через Metal/DX12/Vulkan и рисует первый `egui` shell со статическим
   дорожным viewport, object tree, inspector и simulation placeholder.
+- Добавлены backend-independent `roadsim-compiled-network` и первый staged
+  `roadsim-compiler`: прямой corridor компилируется в compact lane arrays,
+  source map, stable content hash и capability requirements; неподдерживаемые
+  кривые/переменные сечения возвращают object-linked diagnostics.
 
 ### Changed
 

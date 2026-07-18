@@ -17,6 +17,10 @@ Project также хранит exact ruleset pin и hash-bound audited exceptio
 нативный GPU/egui shell со статическим дорожным viewport; редактирование и
 simulation backend ещё не подключены.
 
+Прямой corridor с постоянным cross-section уже детерминированно компилируется в
+отдельный immutable Compiled Simulation Network. Кривые и переменный профиль на
+этом этапе отклоняются явной diagnostic, а не упрощаются молча.
+
 ## Source of truth
 
 Перед изменением кода полностью прочитайте документы в следующем порядке:
