@@ -63,6 +63,14 @@ pub enum ObjectKind {
     WalkingArea,
     Sidewalk,
     RailAlignment,
+    TrafficSign,
+    RoadMarking,
+    StopLine,
+    SignalHead,
+    SignalGroup,
+    SignalProgram,
+    SignalPhase,
+    SignalController,
     Scenario,
 }
 
@@ -92,4 +100,12 @@ typed_id!(CrossingId, Crossing);
 typed_id!(WalkingAreaId, WalkingArea);
 typed_id!(SidewalkId, Sidewalk);
 typed_id!(RailAlignmentId, RailAlignment);
+typed_id!(TrafficSignId, TrafficSign);
+typed_id!(RoadMarkingId, RoadMarking);
+typed_id!(StopLineId, StopLine);
+typed_id!(SignalHeadId, SignalHead);
+typed_id!(SignalGroupId, SignalGroup);
+typed_id!(SignalProgramId, SignalProgram);
+typed_id!(SignalPhaseId, SignalPhase);
+typed_id!(SignalControllerId, SignalController);
 typed_id!(ScenarioId, Scenario);

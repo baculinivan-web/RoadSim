@@ -1,6 +1,6 @@
 use crate::{
     CatalogError, CatalogErrorCode, Crossing, Junction, RailAlignment, ReferenceLine, Sidewalk,
-    StationRange, WalkingArea, multimodal::duplicate_object_ref,
+    StationRange, TrafficControlCatalog, WalkingArea, multimodal::duplicate_object_ref,
 };
 use roadsim_types::{CorridorId, LaneId, LengthMeters};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -499,6 +499,7 @@ pub struct DesignCatalog {
     sidewalks: Vec<Sidewalk>,
     crossings: Vec<Crossing>,
     rail_alignments: Vec<RailAlignment>,
+    traffic_controls: TrafficControlCatalog,
 }
 
 impl DesignCatalog {
@@ -511,6 +512,7 @@ impl DesignCatalog {
             sidewalks: Vec::new(),
             crossings: Vec::new(),
             rail_alignments: Vec::new(),
+            traffic_controls: TrafficControlCatalog::empty(),
         }
     }
     pub fn new(mut corridors: Vec<Corridor>) -> Result<Self, CorridorError> {
@@ -645,7 +647,17 @@ impl DesignCatalog {
             sidewalks,
             crossings,
             rail_alignments,
+            traffic_controls: TrafficControlCatalog::empty(),
         })
+    }
+
+    pub fn with_traffic_controls(
+        mut self,
+        traffic_controls: TrafficControlCatalog,
+    ) -> Result<Self, CatalogError> {
+        traffic_controls.validate_against(&self)?;
+        self.traffic_controls = traffic_controls;
+        Ok(self)
     }
 
     pub fn replace_corridors(&self, corridors: Vec<Corridor>) -> Result<Self, CatalogError> {
@@ -657,6 +669,7 @@ impl DesignCatalog {
             self.crossings.clone(),
             self.rail_alignments.clone(),
         )
+        .and_then(|catalog| catalog.with_traffic_controls(self.traffic_controls.clone()))
     }
     #[must_use]
     pub fn corridors(&self) -> &[Corridor] {
@@ -689,6 +702,10 @@ impl DesignCatalog {
     pub fn rail_alignments(&self) -> &[RailAlignment] {
         &self.rail_alignments
     }
+    #[must_use]
+    pub const fn traffic_controls(&self) -> &TrafficControlCatalog {
+        &self.traffic_controls
+    }
 }
 
 impl<'de> Deserialize<'de> for DesignCatalog {
@@ -709,6 +726,8 @@ impl<'de> Deserialize<'de> for DesignCatalog {
             crossings: Vec<Crossing>,
             #[serde(default)]
             rail_alignments: Vec<RailAlignment>,
+            #[serde(default)]
+            traffic_controls: TrafficControlCatalog,
         }
         let wire = Wire::deserialize(deserializer)?;
         Self::with_multimodal(
@@ -719,6 +738,7 @@ impl<'de> Deserialize<'de> for DesignCatalog {
             wire.crossings,
             wire.rail_alignments,
         )
+        .and_then(|catalog| catalog.with_traffic_controls(wire.traffic_controls))
         .map_err(serde::de::Error::custom)
     }
 }

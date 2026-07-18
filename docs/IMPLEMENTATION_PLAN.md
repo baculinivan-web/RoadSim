@@ -238,7 +238,7 @@ remote, поэтому это evidence пока невозможно получ�
 | E01-T04 | ✅ Готово | Reference line primitives | T02 | line/arc/transition API | continuity/property tests на границах |
 | E01-T05 | ✅ Готово | Corridor и cross-section model | T03–T04 | roads, profile sections, lane semantics | типовой подход описывается без meshes/backend IDs |
 | E01-T06 | ✅ Готово | Junction, crossing, sidewalk, rail semantics | T05 | domain entities | ссылки типизированы; dangling refs диагностируются |
-| E01-T07 | Не начато | Traffic control model | T06 | signs/markings/signals/controllers | phase invariants и object refs тестируются |
+| E01-T07 | ✅ Готово | Traffic control model | T06 | signs/markings/signals/controllers | phase invariants и object refs тестируются |
 | E01-T08 | Не начато | Demand/scenario/experiment skeleton | T03 | domain types без engine logic | явные units/intervals/seed policy |
 | E01-T09 | Не начато | Rule configuration/exceptions model | T03 | pins/exceptions | stale hash semantics покрыта тестом |
 | E01-T10 | Не начато | Semantic project hash | T01–T09 | canonical content hashing | UI/cache/order не меняют hash |

@@ -4,15 +4,16 @@ use roadsim_commands::{
     UpdateCorridor,
 };
 use roadsim_domain::{
-    AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CorridorSide, CrossSectionLayout,
-    CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance, DesignCatalog,
-    EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
-    LocalOrigin, Point2Meters, Project, ProjectMetadata, RailAlignment, ReferenceLine,
-    ReferenceLineElement, ReferenceLinePose, Sidewalk, VerticalDatum,
+    AuthorityCrs, AxisOrder, ControlCode, CoordinateReference, Corridor, CorridorSide,
+    CrossSectionLayout, CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance,
+    DesignCatalog, EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection,
+    LaneSlice, LaneUse, LocalOrigin, Point2Meters, Project, ProjectMetadata, RailAlignment,
+    ReferenceLine, ReferenceLineElement, ReferenceLinePose, Sidewalk, StopLine,
+    TrafficControlCatalog, TrafficSign, VerticalDatum,
 };
 use roadsim_types::{
     CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId, RailAlignmentId,
-    SidewalkId,
+    SidewalkId, StopLineId, TrafficSignId,
 };
 use std::num::NonZeroUsize;
 
@@ -505,6 +506,32 @@ fn corridor_commands_preserve_unmodified_multimodal_entities() {
             .unwrap(),
         ],
     )
+    .unwrap()
+    .with_traffic_controls(
+        TrafficControlCatalog::new(
+            vec![TrafficSign::new(
+                TrafficSignId::from_u128(71),
+                base.id(),
+                length(10.0),
+                ControlCode::new("priority").unwrap(),
+            )],
+            vec![],
+            vec![
+                StopLine::new(
+                    StopLineId::from_u128(72),
+                    base.id(),
+                    length(45.0),
+                    vec![LaneId::from_u128(20)],
+                )
+                .unwrap(),
+            ],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )
+        .unwrap(),
+    )
     .unwrap();
     let project = empty_project();
     let project = Project::with_catalog(
@@ -521,6 +548,19 @@ fn corridor_commands_preserve_unmodified_multimodal_entities() {
     assert_eq!(
         state.project().design_catalog().rail_alignments()[0].id(),
         RailAlignmentId::from_u128(70)
+    );
+    assert_eq!(
+        state.project().design_catalog().traffic_controls().signs()[0].id(),
+        TrafficSignId::from_u128(71)
+    );
+    assert_eq!(
+        state
+            .project()
+            .design_catalog()
+            .traffic_controls()
+            .stop_lines()[0]
+            .id(),
+        StopLineId::from_u128(72)
     );
 }
 

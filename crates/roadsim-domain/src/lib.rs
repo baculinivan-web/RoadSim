@@ -8,6 +8,7 @@ mod corridor;
 mod multimodal;
 mod project;
 mod reference_line;
+mod traffic_control;
 
 pub use corridor::{
     Corridor, CorridorError, CorridorErrorCode, CrossSectionLayout, CrossSectionProfile,
@@ -27,4 +28,9 @@ pub use reference_line::{
     BoundaryContinuity, CircularArcSegment, LineSegment, LinearCurvatureTransition, Point2Meters,
     ReferenceLine, ReferenceLineBoundary, ReferenceLineElement, ReferenceLineElementKind,
     ReferenceLineError, ReferenceLineErrorCode, ReferenceLinePose, StationRange,
+};
+pub use traffic_control::{
+    ControlCode, ControlError, ControlErrorCode, GroupState, RoadMarking, SignalController,
+    SignalGroup, SignalHead, SignalIndication, SignalPhase, SignalProgram, StopLine,
+    TrafficControlCatalog, TrafficSign,
 };

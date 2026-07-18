@@ -9,7 +9,9 @@ workspace, минимальные точки входа `roadsim-app`/`roadsim-c
 backend-independent контракты Design Model: typed IDs, единицы, simulation ticks,
 project metadata, CRS, reference lines, corridor cross-sections и atomic typed
 commands с bounded undo/redo, а также первые junction/pedestrian/rail semantics.
-Интерактивный редактор и simulation backend ещё не реализованы.
+Design Model также содержит минимальные traffic-control contracts для знаков,
+разметки, стоп-линий и фиксированных сигнальных программ. Интерактивный редактор
+и simulation backend ещё не реализованы.
 
 ## Source of truth
 
