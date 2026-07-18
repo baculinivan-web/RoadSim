@@ -1,0 +1,29 @@
+{
+  "packages": [
+    {
+      "id": "path+file:///fixture/roadsim-domain#0.1.0",
+      "name": "roadsim-domain"
+    },
+    {
+      "id": "path+file:///fixture/roadsim-types#0.1.0",
+      "name": "roadsim-types"
+    }
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "path+file:///fixture/roadsim-domain#0.1.0",
+        "deps": [
+          {
+            "name": "roadsim_types",
+            "pkg": "path+file:///fixture/roadsim-types#0.1.0"
+          }
+        ]
+      },
+      {
+        "id": "path+file:///fixture/roadsim-types#0.1.0",
+        "deps": []
+      }
+    ]
+  }
+}

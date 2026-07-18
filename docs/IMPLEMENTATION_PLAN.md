@@ -206,16 +206,23 @@ roadsim/
 | E00-T02 | ✅ Готово | Зафиксировать Rust toolchain и dependency policy | T01 | toolchain, lockfile policy, MSRV policy | CI использует ту же версию; обновление описано |
 | E00-T03 | ✅ Готово | Добавить OSS документы | T01 | licenses, README, CONTRIBUTING, SECURITY, CoC | ссылки валидны; contribution path понятен |
 | E00-T04 | ✅ Готово | Перенести source-of-truth docs и ADR template | T01 | `docs/`, ADR-0000 | doc link check проходит |
-| E00-T05 | Не начато | Настроить CI PR gates | T01–T03 | fmt, clippy, test, docs, deny/audit jobs | намеренно сломанный fixture блокирует PR |
-| E00-T06 | Не начато | Настроить cross-platform matrix | T05 | Windows/macOS/Linux jobs | hello app/CLI собираются на всех runners |
+| E00-T05 | 🟡 Реализовано² | Настроить CI PR gates | T01–T03 | fmt, clippy, test, docs, deny/audit jobs | намеренно сломанный fixture блокирует PR |
+| E00-T06 | 🟡 Реализовано² | Настроить cross-platform matrix | T05 | Windows/macOS/Linux jobs | hello app/CLI собираются на всех runners |
 | E00-T07 | ✅ Готово¹ | Добавить issue/PR templates и labels | T03 | work packet template | PR требует requirement/task IDs |
 | E00-T08 | ✅ Готово | Ввести changelog/schema/ruleset change policy | T04 | policies | sample breaking change проходит checklist |
-| E00-T09 | Не начато | Dependency graph guard | T01 | forbidden-dependency test/tool | UI dependency в domain демонстрационно отклоняется |
-| E00-T10 | Не начато | Базовый SBOM и license inventory | T05 | CI artifact | список включает Rust/native dependencies |
+| E00-T09 | ✅ Готово | Dependency graph guard | T01 | forbidden-dependency test/tool | UI dependency в domain демонстрационно отклоняется |
+| E00-T10 | 🟡 Реализовано² | Базовый SBOM и license inventory | T05 | CI artifact | список включает Rust/native dependencies |
 
 ¹ Issue/PR templates и declarative label catalog готовы; labels применяются к
 GitHub после настройки remote/hosting. Проверка CI pin из E00-T02 выполняется в
-E00-T05. Milestone M0 остаётся открытым до завершения T05, T06, T09 и T10.
+E00-T05.
+
+² Workflow и локальные acceptance checks готовы: exact Rust 1.88.0 проходит
+quality gates, forbidden fixture отклоняется, а SBOM/license inventory локально
+сгенерирован. Статус меняется на `✅ Готово` только после первого green hosted run
+на Ubuntu/Windows/macOS и скачивания CI artifact; текущий checkout не имеет Git
+remote, поэтому это evidence пока невозможно получить. Milestone M0 остаётся
+открытым только до этого внешнего подтверждения T05/T06/T10.
 
 **Результат M0:** skeleton app и CLI запускаются; CI зелен на трех ОС; source of truth находится в репозитории.
 

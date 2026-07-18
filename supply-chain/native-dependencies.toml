@@ -1,0 +1,7 @@
+schema_version = 1
+
+# Native libraries, tools, and redistributable runtimes that participate in a
+# RoadSim build or distribution belong here. The M0 workspace has none; keeping
+# an explicit empty list makes that fact machine-readable instead of silently
+# omitting native dependencies from the inventory.
+components = []

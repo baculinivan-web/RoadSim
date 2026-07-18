@@ -1,0 +1,53 @@
+schema_version = 1
+diagnostic_code = "ARCH-FORBIDDEN-DEPENDENCY"
+
+[[rules]]
+id = "domain-is-independent"
+from = ["roadsim-domain"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-*",
+    "roadsim-cli",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "roadsim-storage",
+    "sumo-worker",
+    "tokio",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4: domain must not depend on UI, GPU, SUMO, filesystem, or an async runtime"
+
+[[rules]]
+id = "compiled-network-is-backend-independent"
+from = ["roadsim-compiled-network"]
+to = [
+    "libsumo",
+    "roadsim-backend-sumo",
+    "roadsim-commands",
+    "roadsim-domain",
+    "roadsim-editor-ui",
+    "sumo-worker",
+]
+rationale = "ARCHITECTURE §4: compiled-network must not depend on mutable Design Model types or a backend implementation"
+
+[[rules]]
+id = "backend-api-is-ui-independent"
+from = ["roadsim-backend-api"]
+to = [
+    "roadsim-app",
+    "roadsim-backend-sumo",
+    "roadsim-cli",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "sumo-worker",
+]
+rationale = "ARCHITECTURE §4: backend-api is a versioned contract and must not depend on desktop UI or an implementation"
+
+[[rules]]
+id = "renderer-does-not-own-domain"
+from = ["roadsim-renderer"]
+to = ["roadsim-commands", "roadsim-domain"]
+rationale = "ARCHITECTURE §4: renderer consumes read-only render snapshots rather than the mutable Design Model"

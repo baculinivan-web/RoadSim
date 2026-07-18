@@ -34,10 +34,14 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo build --workspace --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked --no-deps
+python3 scripts/ci/check_markdown_links.py --root .
 ```
 
 Дополнительные property, corpus, contract, golden, fuzz-smoke и benchmark jobs
 выбираются по изменяемой области согласно `docs/IMPLEMENTATION_PLAN.md`.
+Изменение Cargo graph также требует graph guard, `cargo deny` и обновленного
+SBOM/license inventory по инструкциям из `docs/ci.md`.
 
 ## Pull request
 

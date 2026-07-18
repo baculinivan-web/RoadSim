@@ -47,5 +47,14 @@ Path dependencies допустимы только внутри workspace.
 
 Новая native-зависимость, новая лицензия с дополнительными обязательствами,
 расширение прав worker/plugin или telemetry требуют отдельного review. Политика
-проверяется `cargo deny`/vulnerability tooling после добавления соответствующих
-CI gates в `E00-T05` и инвентаризации в `E00-T10`.
+проверяется точным `cargo-deny 0.20.2`: bans/sources, licenses и RustSec advisories
+являются отдельными CI steps. Конфигурация находится в `deny.toml`; ignore/skip и
+расширение allow-list требуют причины и license/security review.
+
+Архитектурные связи дополнительно проверяются по фактическому `cargo metadata`
+скриптом `scripts/ci/check_dependency_graph.py` и policy
+`supply-chain/dependency-policy.toml`. Native build/runtime components учитываются
+в `supply-chain/native-dependencies.toml`, даже если Cargo не может их обнаружить.
+Точный `cargo-cyclonedx 0.5.9` создает CycloneDX 1.5 документы; CI объединяет их с
+Rust/native license inventory в скачиваемый artifact. Процедура и pins описаны в
+`docs/ci.md`.

@@ -26,12 +26,19 @@ cargo build --workspace --locked
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked --no-deps
+python3 scripts/ci/check_markdown_links.py --root .
 ```
 
 Правила обновления toolchain и зависимостей описаны в
 [dependency policy](docs/dependency-policy.md). Изменения публичных schema,
 ruleset, metrics и protocol следуют [versioned change policy](docs/change-policy.md)
 и фиксируются в [CHANGELOG.md](CHANGELOG.md).
+
+CI, трехплатформенная matrix, архитектурный dependency guard и supply-chain
+artifacts описаны в [CI guide](docs/ci.md). Полный dependency/license/security
+gate дополнительно требует закрепленные `cargo-deny` и `cargo-cyclonedx` из этого
+руководства.
 
 ## Участие в разработке
 

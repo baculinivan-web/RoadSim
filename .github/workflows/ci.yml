@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Rust quality and docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify pinned toolchain
+        run: python3 scripts/ci/check_toolchain.py
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Run tests
+        run: cargo test --workspace --all-features --locked
+      - name: Build documentation with warnings denied
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --locked --no-deps
+      - name: Check repository-local documentation links
+        run: python3 scripts/ci/check_markdown_links.py --root .
+
+  dependency-graph:
+    name: Forbidden dependency graph
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify pinned toolchain
+        run: python3 scripts/ci/check_toolchain.py
+      - name: Build actual Cargo dependency graph
+        run: |
+          mkdir -p target
+          cargo metadata --format-version 1 --locked --all-features > target/cargo-metadata.json
+      - name: Enforce architecture dependency policy
+        run: >-
+          python3 scripts/ci/check_dependency_graph.py
+          --metadata target/cargo-metadata.json
+          --policy supply-chain/dependency-policy.toml
+      - name: Prove the forbidden-edge regression fixture is rejected
+        run: python3 scripts/ci/test_dependency_graph.py -v
+
+  platform:
+    name: Build and smoke (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04 x64
+            os: ubuntu-24.04
+          - name: Windows x64
+            os: windows-2025
+          - name: macOS 14
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify pinned toolchain
+        run: python scripts/ci/check_toolchain.py
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --all-features --locked
+      - name: Smoke desktop entry point
+        run: cargo run --locked --quiet -p roadsim-app
+      - name: Smoke CLI entry point
+        run: cargo run --locked --quiet -p roadsim-cli
+
+  supply-chain:
+    name: Dependencies, licenses, security, and SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify pinned toolchain
+        run: python3 scripts/ci/check_toolchain.py
+      - name: Install pinned supply-chain tools
+        run: |
+          cargo install --locked --version 0.20.2 cargo-deny
+          cargo install --locked --version 0.5.9 cargo-cyclonedx
+      - name: Enforce dependency and source policy
+        run: cargo deny --all-features check bans sources
+      - name: Enforce license policy
+        run: cargo deny --all-features check licenses
+      - name: Audit RustSec advisories
+        run: cargo deny --all-features check advisories
+      - name: Generate CycloneDX SBOMs
+        run: >-
+          cargo cyclonedx --format json --all-features --target all
+          --license-strict --spec-version 1.5
+      - name: Generate license and native dependency inventory
+        run: |
+          mkdir -p target
+          cargo metadata --format-version 1 --locked --all-features > target/supply-chain-metadata.json
+          python3 scripts/ci/generate_supply_chain_artifacts.py \
+            --root . \
+            --metadata target/supply-chain-metadata.json \
+            --native supply-chain/native-dependencies.toml \
+            --output target/supply-chain-artifact
+      - name: Upload supply-chain inventory
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: roadsim-supply-chain-${{ github.sha }}
+          path: target/supply-chain-artifact/
+          if-no-files-found: error
+          retention-days: 14
