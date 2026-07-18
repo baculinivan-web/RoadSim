@@ -1,7 +1,14 @@
-use crate::{ReferenceLine, StationRange};
+use crate::{
+    CatalogError, CatalogErrorCode, Crossing, Junction, RailAlignment, ReferenceLine, Sidewalk,
+    StationRange, WalkingArea, multimodal::duplicate_object_ref,
+};
 use roadsim_types::{CorridorId, LaneId, LengthMeters};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{collections::BTreeSet, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 /// Stable validation failures for corridor and cross-section authoring data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -487,6 +494,11 @@ impl<'de> Deserialize<'de> for Corridor {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DesignCatalog {
     corridors: Vec<Corridor>,
+    junctions: Vec<Junction>,
+    walking_areas: Vec<WalkingArea>,
+    sidewalks: Vec<Sidewalk>,
+    crossings: Vec<Crossing>,
+    rail_alignments: Vec<RailAlignment>,
 }
 
 impl DesignCatalog {
@@ -494,6 +506,11 @@ impl DesignCatalog {
     pub const fn empty() -> Self {
         Self {
             corridors: Vec::new(),
+            junctions: Vec::new(),
+            walking_areas: Vec::new(),
+            sidewalks: Vec::new(),
+            crossings: Vec::new(),
+            rail_alignments: Vec::new(),
         }
     }
     pub fn new(mut corridors: Vec<Corridor>) -> Result<Self, CorridorError> {
@@ -516,7 +533,130 @@ impl DesignCatalog {
                 }
             }
         }
-        Ok(Self { corridors })
+        Ok(Self {
+            corridors,
+            ..Self::empty()
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_multimodal(
+        corridors: Vec<Corridor>,
+        mut junctions: Vec<Junction>,
+        mut walking_areas: Vec<WalkingArea>,
+        mut sidewalks: Vec<Sidewalk>,
+        mut crossings: Vec<Crossing>,
+        mut rail_alignments: Vec<RailAlignment>,
+    ) -> Result<Self, CatalogError> {
+        let base = Self::new(corridors).map_err(|error| {
+            let mut refs = Vec::new();
+            if let Some(id) = error.corridor_id() {
+                refs.push(id.into());
+            }
+            if let Some(id) = error.lane_id() {
+                refs.push(id.into());
+            }
+            CatalogError::new(CatalogErrorCode::CorridorInvariant, refs)
+        })?;
+        junctions.sort_by_key(Junction::id);
+        walking_areas.sort_by_key(WalkingArea::id);
+        sidewalks.sort_by_key(Sidewalk::id);
+        crossings.sort_by_key(Crossing::id);
+        rail_alignments.sort_by_key(RailAlignment::id);
+        if let Some(duplicate) = [
+            duplicate_object_ref(junctions.iter().map(Junction::id)),
+            duplicate_object_ref(walking_areas.iter().map(WalkingArea::id)),
+            duplicate_object_ref(sidewalks.iter().map(Sidewalk::id)),
+            duplicate_object_ref(crossings.iter().map(Crossing::id)),
+            duplicate_object_ref(rail_alignments.iter().map(RailAlignment::id)),
+        ]
+        .into_iter()
+        .flatten()
+        .next()
+        {
+            return Err(CatalogError::new(
+                CatalogErrorCode::DuplicateEntity,
+                vec![duplicate],
+            ));
+        }
+        let corridor_ids: BTreeSet<_> = base.corridors.iter().map(Corridor::id).collect();
+        let area_ids: BTreeSet<_> = walking_areas.iter().map(WalkingArea::id).collect();
+        let mut connected_ends = BTreeMap::new();
+        for junction in &junctions {
+            for approach in junction.approaches() {
+                if !corridor_ids.contains(&approach.corridor_id()) {
+                    return Err(CatalogError::new(
+                        CatalogErrorCode::DanglingCorridor,
+                        vec![junction.id().into(), approach.corridor_id().into()],
+                    ));
+                }
+                if let Some(owner) = connected_ends.insert(*approach, junction.id()) {
+                    return Err(CatalogError::new(
+                        CatalogErrorCode::EndpointAlreadyConnected,
+                        vec![
+                            owner.into(),
+                            junction.id().into(),
+                            approach.corridor_id().into(),
+                        ],
+                    ));
+                }
+            }
+        }
+        for sidewalk in &sidewalks {
+            let Some(corridor) = base.corridor(sidewalk.corridor_id()) else {
+                return Err(CatalogError::new(
+                    CatalogErrorCode::DanglingCorridor,
+                    vec![sidewalk.id().into(), sidewalk.corridor_id().into()],
+                ));
+            };
+            if sidewalk.end_station().get() > corridor.reference_line().total_length().get() {
+                return Err(CatalogError::new(
+                    CatalogErrorCode::StationOutsideCorridor,
+                    vec![sidewalk.id().into(), corridor.id().into()],
+                ));
+            }
+        }
+        for crossing in &crossings {
+            let Some(corridor) = base.corridor(crossing.corridor_id()) else {
+                return Err(CatalogError::new(
+                    CatalogErrorCode::DanglingCorridor,
+                    vec![crossing.id().into(), crossing.corridor_id().into()],
+                ));
+            };
+            if crossing.station().get() >= corridor.reference_line().total_length().get() {
+                return Err(CatalogError::new(
+                    CatalogErrorCode::StationOutsideCorridor,
+                    vec![crossing.id().into(), corridor.id().into()],
+                ));
+            }
+            for area in [crossing.from(), crossing.to()] {
+                if !area_ids.contains(&area) {
+                    return Err(CatalogError::new(
+                        CatalogErrorCode::DanglingWalkingArea,
+                        vec![crossing.id().into(), area.into()],
+                    ));
+                }
+            }
+        }
+        Ok(Self {
+            corridors: base.corridors,
+            junctions,
+            walking_areas,
+            sidewalks,
+            crossings,
+            rail_alignments,
+        })
+    }
+
+    pub fn replace_corridors(&self, corridors: Vec<Corridor>) -> Result<Self, CatalogError> {
+        Self::with_multimodal(
+            corridors,
+            self.junctions.clone(),
+            self.walking_areas.clone(),
+            self.sidewalks.clone(),
+            self.crossings.clone(),
+            self.rail_alignments.clone(),
+        )
     }
     #[must_use]
     pub fn corridors(&self) -> &[Corridor] {
@@ -529,6 +669,26 @@ impl DesignCatalog {
             .ok()
             .map(|index| &self.corridors[index])
     }
+    #[must_use]
+    pub fn junctions(&self) -> &[Junction] {
+        &self.junctions
+    }
+    #[must_use]
+    pub fn walking_areas(&self) -> &[WalkingArea] {
+        &self.walking_areas
+    }
+    #[must_use]
+    pub fn sidewalks(&self) -> &[Sidewalk] {
+        &self.sidewalks
+    }
+    #[must_use]
+    pub fn crossings(&self) -> &[Crossing] {
+        &self.crossings
+    }
+    #[must_use]
+    pub fn rail_alignments(&self) -> &[RailAlignment] {
+        &self.rail_alignments
+    }
 }
 
 impl<'de> Deserialize<'de> for DesignCatalog {
@@ -539,8 +699,26 @@ impl<'de> Deserialize<'de> for DesignCatalog {
         #[derive(Deserialize)]
         struct Wire {
             corridors: Vec<Corridor>,
+            #[serde(default)]
+            junctions: Vec<Junction>,
+            #[serde(default)]
+            walking_areas: Vec<WalkingArea>,
+            #[serde(default)]
+            sidewalks: Vec<Sidewalk>,
+            #[serde(default)]
+            crossings: Vec<Crossing>,
+            #[serde(default)]
+            rail_alignments: Vec<RailAlignment>,
         }
         let wire = Wire::deserialize(deserializer)?;
-        Self::new(wire.corridors).map_err(serde::de::Error::custom)
+        Self::with_multimodal(
+            wire.corridors,
+            wire.junctions,
+            wire.walking_areas,
+            wire.sidewalks,
+            wire.crossings,
+            wire.rail_alignments,
+        )
+        .map_err(serde::de::Error::custom)
     }
 }

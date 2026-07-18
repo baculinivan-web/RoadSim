@@ -4,14 +4,15 @@ use roadsim_commands::{
     UpdateCorridor,
 };
 use roadsim_domain::{
-    AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CrossSectionLayout,
+    AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CorridorSide, CrossSectionLayout,
     CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance, DesignCatalog,
     EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
-    LocalOrigin, Point2Meters, Project, ProjectMetadata, ReferenceLine, ReferenceLineElement,
-    ReferenceLinePose, VerticalDatum,
+    LocalOrigin, Point2Meters, Project, ProjectMetadata, RailAlignment, ReferenceLine,
+    ReferenceLineElement, ReferenceLinePose, Sidewalk, VerticalDatum,
 };
 use roadsim_types::{
-    CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId,
+    CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId, RailAlignmentId,
+    SidewalkId,
 };
 use std::num::NonZeroUsize;
 
@@ -484,6 +485,76 @@ fn history_rejects_an_envelope_from_another_lineage_without_stack_changes() {
     assert_eq!(target, before);
     assert_eq!(history.undo_len(), 0);
     assert_eq!(history.redo_len(), 0);
+}
+
+#[test]
+fn corridor_commands_preserve_unmodified_multimodal_entities() {
+    let base = corridor(3.0);
+    let catalog = DesignCatalog::with_multimodal(
+        vec![base.clone()],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        vec![
+            RailAlignment::new(
+                RailAlignmentId::from_u128(70),
+                base.reference_line().clone(),
+                length(1.435),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    let project = empty_project();
+    let project = Project::with_catalog(
+        project.id(),
+        project.metadata().clone(),
+        project.coordinate_reference().clone(),
+        catalog,
+    );
+    let mut state = ModelState::new(project);
+
+    state.execute(&UpdateCorridor::new(corridor(4.0))).unwrap();
+
+    assert_eq!(state.project().design_catalog().rail_alignments().len(), 1);
+    assert_eq!(
+        state.project().design_catalog().rail_alignments()[0].id(),
+        RailAlignmentId::from_u128(70)
+    );
+}
+
+#[test]
+fn deleting_a_referenced_corridor_is_rejected_atomically() {
+    let base = corridor(3.0);
+    let sidewalk = Sidewalk::new(
+        SidewalkId::from_u128(50),
+        base.id(),
+        CorridorSide::Right,
+        length(0.0),
+        length(50.0),
+        length(2.0),
+    )
+    .unwrap();
+    let catalog =
+        DesignCatalog::with_multimodal(vec![base], vec![], vec![], vec![sidewalk], vec![], vec![])
+            .unwrap();
+    let project = empty_project();
+    let project = Project::with_catalog(
+        project.id(),
+        project.metadata().clone(),
+        project.coordinate_reference().clone(),
+        catalog,
+    );
+    let mut state = ModelState::new(project);
+    let before = state.clone();
+
+    let error = state
+        .execute(&DeleteCorridor::new(CorridorId::from_u128(10)))
+        .unwrap_err();
+
+    assert_eq!(error.code(), CommandErrorCode::DomainInvariant);
+    assert_eq!(state, before);
 }
 
 proptest! {

@@ -1,7 +1,8 @@
 use roadsim_types::{
     AngleRadians, CoordinateMeters, CorridorId, CurvaturePerMeter, CurvatureTolerancePerMeter,
     DurationSeconds, HeadingRadians, LaneId, LengthMeters, ObjectKind, ObjectRef, ProjectId,
-    SimulationTick, SpeedMetersPerSecond, ToleranceMeters, ValueErrorCode,
+    RailAlignmentId, SidewalkId, SimulationTick, SpeedMetersPerSecond, ToleranceMeters,
+    ValueErrorCode, WalkingAreaId,
 };
 
 #[test]
@@ -21,6 +22,18 @@ fn object_refs_preserve_kind_and_uuid() {
     assert_eq!(object_ref.kind(), ObjectKind::Corridor);
     assert_eq!(object_ref.uuid(), corridor.as_uuid());
     assert_ne!(ObjectRef::from(LaneId::from_u128(42)), object_ref);
+    assert_eq!(
+        ObjectRef::from(WalkingAreaId::from_u128(42)).kind(),
+        ObjectKind::WalkingArea
+    );
+    assert_eq!(
+        ObjectRef::from(SidewalkId::from_u128(42)).kind(),
+        ObjectKind::Sidewalk
+    );
+    assert_eq!(
+        ObjectRef::from(RailAlignmentId::from_u128(42)).kind(),
+        ObjectKind::RailAlignment
+    );
 }
 
 #[test]

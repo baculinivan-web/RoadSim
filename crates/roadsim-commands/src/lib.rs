@@ -540,16 +540,16 @@ impl ModelTransaction {
             .revision
             .checked_next()
             .ok_or_else(|| CommandError::new(CommandErrorCode::RevisionOverflow, Vec::new()))?;
-        let catalog = DesignCatalog::new(self.working_model.corridors).map_err(|error| {
-            let mut refs = Vec::new();
-            if let Some(corridor) = error.corridor_id() {
-                refs.push(corridor.into());
-            }
-            if let Some(lane) = error.lane_id() {
-                refs.push(lane.into());
-            }
-            CommandError::new(CommandErrorCode::DomainInvariant, refs)
-        })?;
+        let catalog = self
+            .project_shell
+            .design_catalog()
+            .replace_corridors(self.working_model.corridors)
+            .map_err(|error| {
+                CommandError::new(
+                    CommandErrorCode::DomainInvariant,
+                    error.object_refs().to_vec(),
+                )
+            })?;
         state.project = rebuild_project(&self.project_shell, catalog);
         state.revision = next_revision;
         Ok(self.outcome)

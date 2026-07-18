@@ -13,7 +13,8 @@ mod ids;
 mod units;
 
 pub use ids::{
-    CorridorId, CrossingId, JunctionId, LaneId, ObjectKind, ObjectRef, ProjectId, ScenarioId,
+    CorridorId, CrossingId, JunctionId, LaneId, ObjectKind, ObjectRef, ProjectId, RailAlignmentId,
+    ScenarioId, SidewalkId, WalkingAreaId,
 };
 pub use units::{
     AngleRadians, CoordinateMeters, CurvaturePerMeter, CurvatureTolerancePerMeter, DurationSeconds,

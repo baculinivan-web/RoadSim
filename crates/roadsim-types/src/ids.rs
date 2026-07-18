@@ -60,6 +60,9 @@ pub enum ObjectKind {
     Lane,
     Junction,
     Crossing,
+    WalkingArea,
+    Sidewalk,
+    RailAlignment,
     Scenario,
 }
 
@@ -86,4 +89,7 @@ typed_id!(CorridorId, Corridor);
 typed_id!(LaneId, Lane);
 typed_id!(JunctionId, Junction);
 typed_id!(CrossingId, Crossing);
+typed_id!(WalkingAreaId, WalkingArea);
+typed_id!(SidewalkId, Sidewalk);
+typed_id!(RailAlignmentId, RailAlignment);
 typed_id!(ScenarioId, Scenario);

@@ -5,12 +5,17 @@
 //! limits therefore remain mandatory at the storage boundary (`E03`).
 
 mod corridor;
+mod multimodal;
 mod project;
 mod reference_line;
 
 pub use corridor::{
     Corridor, CorridorError, CorridorErrorCode, CrossSectionLayout, CrossSectionProfile,
     CrossSectionSection, DesignCatalog, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
+};
+pub use multimodal::{
+    CatalogError, CatalogErrorCode, CorridorEnd, CorridorEndpointRef, CorridorSide, Crossing,
+    Junction, MultimodalError, MultimodalErrorCode, RailAlignment, Sidewalk, WalkingArea,
 };
 
 pub use project::{

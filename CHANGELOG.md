@@ -40,6 +40,8 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Corridor commands теперь возвращают inverse operations; state-bound
   `CommandHistory` предоставляет bounded undo/redo, сохраняет stable IDs и
   записывает multi-command transaction как одно history entry.
+- Design Model расширена backend-independent junction approaches, walking areas,
+  corridor-attached sidewalks/crossings и rail alignments с typed UUID refs.
 
 ### Changed
 
@@ -67,3 +69,6 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   command envelopes привязаны к конкретной model lineage.
 - History отклоняет чужую model lineage и незаписанные изменения revision;
   failed undo/redo не сдвигает history stacks.
+- Aggregate validation отклоняет dangling corridor/walking-area refs, повторное
+  подключение corridor endpoint и station за пределами reference line. Corridor
+  commands сохраняют несвязанные multimodal entities и не удаляют referenced data.
