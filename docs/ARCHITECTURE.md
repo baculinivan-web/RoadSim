@@ -40,6 +40,7 @@
 | ADR-014 | Детерминизм — часть контрактов данных, scheduler и tests | принято |
 | ADR-015 | Основной код — Apache-2.0 OR MIT; лицензионный review дистрибуции обязателен | предварительно |
 | ADR-016 | Reference line — chained line/arc/linear-curvature authoring contract | принято |
+| ADR-017 | Project JSON — RFC 8785 canonicalization, SHA-256 и namespaced extensions | proposed |
 
 Новые решения оформляются отдельными ADR в `docs/adr/NNNN-title.md`: context, options, decision, consequences, migration.
 
