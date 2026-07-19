@@ -418,6 +418,13 @@ keys и deterministic frame batches покрыты contract/property tests; root
 substreams закреплены known vectors. Worker protocol, metric batching, watchdog,
 resource directories и общий suite для внешних backend остаются невыполненными.
 
+Статус E09-T04…T07: 🟡 добавлен macOS-tested cross-platform child-process
+prototype из ADR-018 (`proposed`): inherited stdin/stdout, versioned bounded JSON
+control frames, one-time token, correlation, capability rejection и
+crash/hang/timeout/cancel harness. Acceptance остаётся частичным до Windows/Linux
+CI evidence, architecture/security review и принятия transport ADR. State/metric
+batch transport, backpressure и workdir/resource isolation не реализованы.
+
 Preview вертикального пути E11: desktop наблюдаемо выполняет встроенный Design
 Model → CSN → fake backend → 18-agent frame overlay и предоставляет
 Start/Pause/Resume/Stop с unit lifecycle tests. Native macOS smoke за два GPU

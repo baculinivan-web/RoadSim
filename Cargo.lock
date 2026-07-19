@@ -1669,6 +1669,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "roadsim-worker-client"
+version = "0.1.0"
+dependencies = [
+ "roadsim-worker-protocol",
+]
+
+[[package]]
+name = "roadsim-worker-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "roadsim-worker-stub"
+version = "0.1.0"
+dependencies = [
+ "roadsim-worker-client",
+ "roadsim-worker-protocol",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

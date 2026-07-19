@@ -9,6 +9,9 @@ members = [
     "crates/roadsim-compiler",
     "crates/roadsim-domain",
     "crates/roadsim-types",
+    "crates/roadsim-worker-client",
+    "crates/roadsim-worker-protocol",
+    "workers/roadsim-worker-stub",
 ]
 resolver = "3"
 

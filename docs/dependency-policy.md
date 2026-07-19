@@ -164,3 +164,12 @@ backend выполняет готовые in-memory futures через caller и
 async runtime. Crate имеет `MIT OR Apache-2.0`, совместим с workspace MSRV и
 проходит RustSec/license/source gates. Источник review:
 [async-trait 0.1.89](https://docs.rs/crate/async-trait/0.1.89).
+
+E09 worker control prototype не добавляет внешних зависимостей. Framing повторно
+использует уже принятую `serde_json 1.0.150`, теперь как production dependency
+только изолированного `roadsim-worker-protocol`; максимальный payload 1 MiB
+проверяется до allocation. Process, pipe, bounded channel, timeout и child reap
+реализованы стандартной библиотекой. Network, native code, async runtime и
+filesystem workdir в этом срезе не добавлены. JSON предназначен только для
+малого control plane; E09-T08 обязан отдельно рассмотреть зависимости и license
+impact batch transport.

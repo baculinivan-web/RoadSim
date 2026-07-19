@@ -83,3 +83,33 @@ id = "renderer-does-not-own-domain"
 from = ["roadsim-renderer"]
 to = ["roadsim-commands", "roadsim-domain"]
 rationale = "ARCHITECTURE §4: renderer consumes read-only render snapshots rather than the mutable Design Model"
+
+[[rules]]
+id = "worker-protocol-is-wire-only"
+from = ["roadsim-worker-protocol"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-*",
+    "roadsim-domain",
+    "roadsim-renderer",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4/§11: worker wire DTO and framing must not depend on UI, mutable Design Model, or a backend implementation"
+
+[[rules]]
+id = "worker-client-is-ui-and-engine-independent"
+from = ["roadsim-worker-client"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-sumo",
+    "roadsim-domain",
+    "roadsim-renderer",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4/§11: generic worker lifecycle client exposes no UI, domain, libsumo, or engine implementation types"

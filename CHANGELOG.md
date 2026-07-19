@@ -64,6 +64,10 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Desktop demo проходит полный Design Model → CSN → fake backend → frame overlay
   путь; Start/Pause/Resume/Stop управляют наблюдаемым run, а native smoke требует
   первый batch из 18 агентов, поэтому GPU-only false green больше невозможен.
+- Добавлен versioned worker control prototype: bounded JSON framing по inherited
+  process pipes, одноразовый handshake token, capability preflight, correlation
+  и lifecycle harness для cancel/crash/hang/timeout без сетевого listener. Это
+  первый control protocol v1; предыдущей версии и migration нет.
 
 ### Changed
 
@@ -83,6 +87,8 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Reference-line constructors и deserialization отклоняют нулевые/вырожденные
   primitives, non-finite angular change, station overflow и потерю представимого
   station increment; tolerance непрерывности всегда передаётся вызывающей стороной.
+- Worker control reader отклоняет empty, malformed и превышающий 1 MiB frame до
+  payload allocation; version/auth/capability failures имеют стабильные codes.
 - Corridor validation повторно проверяется при deserialization и отклоняет
   dangling/duplicate lane references, нулевые widths, неупорядоченные или выходящие
   за reference line sections и непредставимую суммарную ширину.

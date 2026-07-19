@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roadsim.dev/schemas/worker-protocol/control-v1.schema.json",
+  "title": "RoadSim worker control protocol v1",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ],
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9._-]+$"
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "correlation": {
+      "type": "object",
+      "required": ["protocol_version", "request_id", "session_id", "sequence"],
+      "properties": {
+        "protocol_version": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "request_id": { "type": "integer", "minimum": 0 },
+        "session_id": { "type": ["integer", "null"], "minimum": 0 },
+        "sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "request": {
+      "allOf": [
+        { "$ref": "#/$defs/correlation" },
+        {
+          "type": "object",
+          "required": ["payload"],
+          "properties": {
+            "payload": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "data"],
+                  "properties": {
+                    "type": { "const": "handshake" },
+                    "data": {
+                      "type": "object",
+                      "required": ["auth_token", "required_capabilities"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "auth_token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                        "required_capabilities": { "$ref": "#/$defs/capabilities" }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                { "$ref": "#/$defs/ping" },
+                { "$ref": "#/$defs/open_session" },
+                { "$ref": "#/$defs/cancel_session" },
+                { "$ref": "#/$defs/shutdown" }
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ping": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "ping" } },
+      "additionalProperties": false
+    },
+    "open_session": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "open_session" } },
+      "additionalProperties": false
+    },
+    "cancel_session": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "cancel_session" } },
+      "additionalProperties": false
+    },
+    "shutdown": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "shutdown" } },
+      "additionalProperties": false
+    },
+    "response": {
+      "allOf": [
+        { "$ref": "#/$defs/correlation" },
+        {
+          "type": "object",
+          "required": ["payload"],
+          "properties": {
+            "payload": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "data"],
+                  "properties": {
+                    "type": { "const": "handshake_accepted" },
+                    "data": {
+                      "type": "object",
+                      "required": ["worker_name", "capabilities"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "worker_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+                        "capabilities": { "$ref": "#/$defs/capabilities" }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                { "$ref": "#/$defs/pong" },
+                { "$ref": "#/$defs/session_opened" },
+                { "$ref": "#/$defs/session_cancelled" },
+                { "$ref": "#/$defs/shutdown_acknowledged" },
+                {
+                  "type": "object",
+                  "required": ["type", "data"],
+                  "properties": {
+                    "type": { "const": "error" },
+                    "data": {
+                      "type": "object",
+                      "required": ["code", "unsupported_capabilities"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            "worker.protocol.version_mismatch",
+                            "worker.protocol.authentication_failed",
+                            "worker.protocol.handshake_required",
+                            "worker.capability.unsupported",
+                            "worker.capability.manifest_invalid",
+                            "worker.protocol.sequence_out_of_order",
+                            "worker.session.already_active",
+                            "worker.session.not_found",
+                            "worker.protocol.request_invalid"
+                          ]
+                        },
+                        "unsupported_capabilities": { "$ref": "#/$defs/capabilities" }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "pong": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "pong" } },
+      "additionalProperties": false
+    },
+    "session_opened": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "session_opened" } },
+      "additionalProperties": false
+    },
+    "session_cancelled": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "session_cancelled" } },
+      "additionalProperties": false
+    },
+    "shutdown_acknowledged": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "shutdown_acknowledged" } },
+      "additionalProperties": false
+    }
+  }
+}
