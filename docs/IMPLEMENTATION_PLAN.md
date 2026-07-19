@@ -427,7 +427,8 @@ batch transport, backpressure и workdir/resource isolation не реализо�
 
 Preview вертикального пути E11: desktop наблюдаемо выполняет встроенный Design
 Model → CSN → fake backend → 18-agent frame overlay и предоставляет
-Start/Pause/Resume/Stop с unit lifecycle tests. Native macOS smoke за два GPU
+Start/Pause/Resume/Stop с unit lifecycle tests. Agent frames содержат метрический
+footprint 4,5 × 1,8 м и viewport рисует ориентированный прямоугольник. Native macOS smoke за два GPU
 frame подтверждает `simulation_state=running tick=0 agents=18`. Это ранняя
 проверка границ, а не закрытие E11-T01…T03: production orchestration всё ещё
 зависит от E10 worker/state batches, frame adapter не instanced и SUMO отсутствует.

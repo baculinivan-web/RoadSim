@@ -2,10 +2,10 @@
 
 use async_trait::async_trait;
 use roadsim_backend_api::{
-    Ack, AgentState, BACKEND_API_VERSION, BackendArtifact, BackendError, BackendErrorCode,
-    BackendErrorPhase, BackendEvent, BackendHello, BackendId, ClientHello, CompileOptions,
-    ControlCommand, ControlKind, FrameBatch, RunConfig, RunSummary, ScenarioSnapshot, SeedPurpose,
-    SessionState, SimulationBackend, SimulationSession, derive_seed,
+    Ack, AgentFootprint, AgentState, BACKEND_API_VERSION, BackendArtifact, BackendError,
+    BackendErrorCode, BackendErrorPhase, BackendEvent, BackendHello, BackendId, ClientHello,
+    CompileOptions, ControlCommand, ControlKind, FrameBatch, RunConfig, RunSummary,
+    ScenarioSnapshot, SeedPurpose, SessionState, SimulationBackend, SimulationSession, derive_seed,
 };
 use roadsim_compiled_network::{CapabilityId, CompiledNetwork};
 use roadsim_types::{Sha256Digest, SimulationTick};
@@ -16,6 +16,8 @@ use std::{
 
 pub const FAKE_BACKEND_ID: BackendId = BackendId::new("roadsim.fake.v1");
 const MAX_REMEMBERED_CONTROL_KEYS: usize = 64;
+const DEMO_CAR_LENGTH_M: f64 = 4.5;
+const DEMO_CAR_WIDTH_M: f64 = 1.8;
 
 #[derive(Clone)]
 struct StoredArtifact {
@@ -164,8 +166,9 @@ impl FakeSession {
         )
     }
 
-    fn frame(&self, tick: u64) -> FrameBatch {
+    fn frame(&self, tick: u64) -> Result<FrameBatch, BackendError> {
         let lane_count = self.artifact.network.lanes().len();
+        let footprint = AgentFootprint::new(DEMO_CAR_LENGTH_M, DEMO_CAR_WIDTH_M)?;
         let agents = (0..self.artifact.scenario.agent_count())
             .map(|agent_id| {
                 let lane_index = agent_id as usize % lane_count;
@@ -190,10 +193,10 @@ impl FakeSession {
                     lane.end().y_m() - lane.start().y_m(),
                     lane.end().x_m() - lane.start().x_m(),
                 );
-                AgentState::new(agent_id, lane_id, x_m, y_m, heading_rad)
+                AgentState::new(agent_id, lane_id, x_m, y_m, heading_rad, footprint)
             })
-            .collect();
-        FrameBatch::new(SimulationTick::new(tick), agents)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(FrameBatch::new(SimulationTick::new(tick), agents))
     }
 }
 
@@ -265,7 +268,7 @@ impl SimulationSession for FakeSession {
             .unwrap_or(u64::MAX)
             .min(self.run.duration_ticks());
         self.emitted_frames += 1;
-        Ok(BackendEvent::Frame(self.frame(tick)))
+        self.frame(tick).map(BackendEvent::Frame)
     }
 
     async fn cancel(&mut self) -> Result<RunSummary, BackendError> {

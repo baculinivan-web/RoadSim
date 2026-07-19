@@ -112,6 +112,7 @@ pub enum BackendErrorCode {
     ArtifactBackendMismatch,
     ArtifactNotFound,
     InvalidRunConfig,
+    InvalidAgentState,
     InvalidLifecycle,
     IdempotencyConflict,
     TerminalSession,
@@ -129,6 +130,7 @@ impl BackendErrorCode {
             Self::ArtifactBackendMismatch => "backend.start.artifact_backend_mismatch",
             Self::ArtifactNotFound => "backend.start.artifact_not_found",
             Self::InvalidRunConfig => "backend.start.run_config_invalid",
+            Self::InvalidAgentState => "backend.frame.agent_state_invalid",
             Self::InvalidLifecycle => "backend.session.lifecycle_invalid",
             Self::IdempotencyConflict => "backend.session.idempotency_conflict",
             Self::TerminalSession => "backend.session.terminal",
@@ -436,6 +438,35 @@ impl Ack {
     }
 }
 
+/// Physical footprint used to draw one simulation agent in metric scale.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct AgentFootprint {
+    length_m: f64,
+    width_m: f64,
+}
+
+impl AgentFootprint {
+    pub fn new(length_m: f64, width_m: f64) -> Result<Self, BackendError> {
+        if !length_m.is_finite() || !width_m.is_finite() || length_m <= 0.0 || width_m <= 0.0 {
+            return Err(BackendError::new(
+                BackendErrorPhase::Runtime,
+                BackendErrorCode::InvalidAgentState,
+            ));
+        }
+        Ok(Self { length_m, width_m })
+    }
+
+    #[must_use]
+    pub const fn length_m(self) -> f64 {
+        self.length_m
+    }
+
+    #[must_use]
+    pub const fn width_m(self) -> f64 {
+        self.width_m
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct AgentState {
     agent_id: u32,
@@ -443,24 +474,32 @@ pub struct AgentState {
     x_m: f64,
     y_m: f64,
     heading_rad: f64,
+    footprint: AgentFootprint,
 }
 
 impl AgentState {
-    #[must_use]
-    pub const fn new(
+    pub fn new(
         agent_id: u32,
         lane_id: CompiledLaneId,
         x_m: f64,
         y_m: f64,
         heading_rad: f64,
-    ) -> Self {
-        Self {
+        footprint: AgentFootprint,
+    ) -> Result<Self, BackendError> {
+        if !x_m.is_finite() || !y_m.is_finite() || !heading_rad.is_finite() {
+            return Err(BackendError::new(
+                BackendErrorPhase::Runtime,
+                BackendErrorCode::InvalidAgentState,
+            ));
+        }
+        Ok(Self {
             agent_id,
             lane_id,
             x_m,
             y_m,
             heading_rad,
-        }
+            footprint,
+        })
     }
 
     #[must_use]
@@ -486,6 +525,11 @@ impl AgentState {
     #[must_use]
     pub const fn heading_rad(self) -> f64 {
         self.heading_rad
+    }
+
+    #[must_use]
+    pub const fn footprint(self) -> AgentFootprint {
+        self.footprint
     }
 }
 
@@ -620,5 +664,26 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.code(), BackendErrorCode::InvalidRunConfig);
         }
+    }
+
+    #[test]
+    fn agent_state_rejects_invalid_geometry_and_preserves_metric_footprint() {
+        let footprint = AgentFootprint::new(4.5, 1.8).unwrap();
+        let state = AgentState::new(1, CompiledLaneId::new(2), 10.0, 20.0, 0.5, footprint).unwrap();
+        assert_eq!(state.footprint().length_m(), 4.5);
+        assert_eq!(state.footprint().width_m(), 1.8);
+        assert!(AgentFootprint::new(0.0, 1.8).is_err());
+        assert!(AgentFootprint::new(4.5, f64::NAN).is_err());
+        assert!(
+            AgentState::new(
+                1,
+                CompiledLaneId::new(2),
+                f64::INFINITY,
+                20.0,
+                0.5,
+                footprint,
+            )
+            .is_err()
+        );
     }
 }

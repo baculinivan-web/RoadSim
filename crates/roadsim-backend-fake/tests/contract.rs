@@ -208,6 +208,8 @@ proptest! {
                 prop_assert!(agent.heading_rad().is_finite());
                 prop_assert!((0.0..=100.0).contains(&agent.x_m()));
                 prop_assert_eq!(agent.y_m(), 0.0);
+                prop_assert_eq!(agent.footprint().length_m(), 4.5);
+                prop_assert_eq!(agent.footprint().width_m(), 1.8);
             }
             Ok(())
         })?;

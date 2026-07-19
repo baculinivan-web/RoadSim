@@ -64,6 +64,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Desktop demo проходит полный Design Model → CSN → fake backend → frame overlay
   путь; Start/Pause/Resume/Stop управляют наблюдаемым run, а native smoke требует
   первый batch из 18 агентов, поэтому GPU-only false green больше невозможен.
+- Агенты fake simulation теперь несут проверяемый метрический footprint и
+  отображаются ориентированными прямоугольниками размера легкового автомобиля,
+  а не условными точками.
 - Добавлен versioned worker control prototype: bounded JSON framing по inherited
   process pipes, одноразовый handshake token, capability preflight, correlation
   и lifecycle harness для cancel/crash/hang/timeout без сетевого listener. Это

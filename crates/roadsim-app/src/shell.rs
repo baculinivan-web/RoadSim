@@ -482,9 +482,18 @@ fn draw_network(
     if let Some(frame) = frame {
         for agent in frame.agents() {
             let position = transform.map_xy(agent.x_m(), agent.y_m());
-            painter.circle_filled(position, 5.5, Color32::from_rgb(68, 170, 235));
             let heading = agent.heading_rad() as f32;
-            let nose = position + Vec2::new(heading.cos(), -heading.sin()) * 8.0;
+            let footprint = agent.footprint();
+            let length_px = footprint.length_m() as f32 * transform.scale;
+            let width_px = footprint.width_m() as f32 * transform.scale;
+            let corners = vehicle_corners(position, heading, length_px, width_px);
+            painter.add(egui::Shape::convex_polygon(
+                corners.to_vec(),
+                Color32::from_rgb(68, 170, 235),
+                Stroke::new(1.0, Color32::from_rgb(224, 242, 255)),
+            ));
+            let nose =
+                position + Vec2::new(heading.cos(), -heading.sin()) * (length_px * 0.5).max(2.0);
             painter.line_segment(
                 [position, nose],
                 Stroke::new(2.0, Color32::from_rgb(224, 242, 255)),
@@ -500,6 +509,19 @@ fn draw_network(
         egui::FontId::monospace(11.0),
         Color32::from_gray(135),
     );
+}
+
+fn vehicle_corners(center: Pos2, heading_rad: f32, length_px: f32, width_px: f32) -> [Pos2; 4] {
+    let forward = Vec2::new(heading_rad.cos(), -heading_rad.sin());
+    let right = Vec2::new(heading_rad.sin(), heading_rad.cos());
+    let half_length = forward * (length_px * 0.5);
+    let half_width = right * (width_px * 0.5);
+    [
+        center + half_length + half_width,
+        center + half_length - half_width,
+        center - half_length - half_width,
+        center - half_length + half_width,
+    ]
 }
 
 struct ViewTransform {
@@ -570,7 +592,8 @@ fn draw_dashed_line(painter: &egui::Painter, start: Pos2, end: Pos2, color: Colo
 
 #[cfg(test)]
 mod tests {
-    use super::SmokeConfig;
+    use super::{SmokeConfig, vehicle_corners};
+    use egui::Pos2;
 
     #[test]
     fn smoke_frame_limit_is_bounded_and_explicit() {
@@ -585,5 +608,21 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn vehicle_rectangle_preserves_metric_aspect_and_heading() {
+        let horizontal = vehicle_corners(Pos2::new(10.0, 20.0), 0.0, 45.0, 18.0);
+        assert_eq!(horizontal[0], Pos2::new(32.5, 29.0));
+        assert_eq!(horizontal[2], Pos2::new(-12.5, 11.0));
+
+        let vertical = vehicle_corners(
+            Pos2::new(10.0, 20.0),
+            std::f32::consts::FRAC_PI_2,
+            45.0,
+            18.0,
+        );
+        assert!((vertical[0].x - 19.0).abs() < 1.0e-5);
+        assert!((vertical[0].y + 2.5).abs() < 1.0e-5);
     }
 }
