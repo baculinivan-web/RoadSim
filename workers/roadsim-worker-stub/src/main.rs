@@ -1,17 +1,21 @@
 use roadsim_worker_protocol::{
-    AuthToken, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload,
-    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode, capabilities_are_valid,
-    read_frame, write_frame,
+    AuthToken, MetricBatch, MetricSample, RequestEnvelope, RequestPayload, ResponseEnvelope,
+    ResponsePayload, TerminalEvent, TerminalStatus, VisualFrameBatch, WORKER_PROTOCOL_VERSION,
+    WORKER_TOKEN_ENV, WorkerDataEnvelope, WorkerDataPayload, WorkerDiagnosticCode,
+    capabilities_are_valid, read_frame, write_data_frame, write_frame,
 };
-use std::{env, io, process::ExitCode};
+use std::{env, io, process::ExitCode, sync::mpsc, thread};
 
 const SUPPORTED_CAPABILITY: &str = "worker.stub.lifecycle";
+const BATCH_CAPABILITY: &str = "worker.stub.batches";
+const DATA_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Mode {
     Normal,
     CrashOnPing,
     HangOnPing,
+    EmitBatchesOnPing,
 }
 
 fn main() -> ExitCode {
@@ -19,6 +23,7 @@ fn main() -> ExitCode {
         None => Mode::Normal,
         Some(value) if value == "--crash-on-ping" => Mode::CrashOnPing,
         Some(value) if value == "--hang-on-ping" => Mode::HangOnPing,
+        Some(value) if value == "--emit-batches-on-ping" => Mode::EmitBatchesOnPing,
         Some(_) => return ExitCode::from(64),
     };
     let Ok(expected_token) = env::var(WORKER_TOKEN_ENV) else {
@@ -35,9 +40,20 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
     let stdout = io::stdout();
     let mut reader = stdin.lock();
     let mut writer = stdout.lock();
+    let (data_sender, data_receiver) = mpsc::sync_channel(DATA_QUEUE_CAPACITY);
+    let data_writer_thread = thread::spawn(move || {
+        let stderr = io::stderr();
+        let mut data_writer = stderr.lock();
+        while let Ok(envelope) = data_receiver.recv() {
+            if write_data_frame(&mut data_writer, &envelope).is_err() {
+                break;
+            }
+        }
+    });
     let mut handshake_complete = false;
     let mut last_sequence = None;
     let mut active_session = None;
+    let mut data_sequence = 1_u64;
 
     loop {
         let request: RequestEnvelope = match read_frame(&mut reader) {
@@ -142,7 +158,7 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
             required_capabilities.dedup();
             let unsupported: Vec<_> = required_capabilities
                 .into_iter()
-                .filter(|capability| capability != SUPPORTED_CAPABILITY)
+                .filter(|capability| !supported_capabilities(mode).contains(&capability.as_str()))
                 .collect();
             if !unsupported.is_empty() {
                 if respond_error(
@@ -164,7 +180,10 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                     &request,
                     ResponsePayload::HandshakeAccepted {
                         worker_name: "roadsim-worker-stub".to_owned(),
-                        capabilities: vec![SUPPORTED_CAPABILITY.to_owned()],
+                        capabilities: supported_capabilities(mode)
+                            .iter()
+                            .map(|capability| (*capability).to_owned())
+                            .collect(),
                     },
                 ),
             )
@@ -196,6 +215,25 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                 Mode::HangOnPing => loop {
                     std::thread::park();
                 },
+                Mode::EmitBatchesOnPing => {
+                    let Some(session_id) = active_session else {
+                        if respond_error(
+                            &mut writer,
+                            &request,
+                            WorkerDiagnosticCode::SessionNotFound,
+                            Vec::new(),
+                        )
+                        .is_err()
+                        {
+                            return ExitCode::from(74);
+                        }
+                        continue;
+                    };
+                    if emit_demo_batches(&data_sender, &mut data_sequence, session_id).is_err() {
+                        return ExitCode::from(74);
+                    }
+                    ResponsePayload::Pong
+                }
             },
             RequestPayload::OpenSession => {
                 let Some(session_id) = request.session_id else {
@@ -242,6 +280,20 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                     continue;
                 }
                 active_session = None;
+                if data_sender
+                    .send(WorkerDataEnvelope::new(
+                        request.session_id.unwrap_or_default(),
+                        data_sequence,
+                        WorkerDataPayload::Terminal(TerminalEvent {
+                            status: TerminalStatus::Cancelled,
+                            diagnostic: None,
+                        }),
+                    ))
+                    .is_err()
+                {
+                    return ExitCode::from(74);
+                }
+                data_sequence = data_sequence.saturating_add(1);
                 ResponsePayload::SessionCancelled
             }
             RequestPayload::Shutdown => ResponsePayload::ShutdownAcknowledged,
@@ -252,9 +304,62 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
             return ExitCode::from(74);
         }
         if shutdown {
+            drop(data_sender);
+            let _ = data_writer_thread.join();
             return ExitCode::SUCCESS;
         }
     }
+}
+
+fn supported_capabilities(mode: Mode) -> &'static [&'static str] {
+    const LIFECYCLE: &[&str] = &[SUPPORTED_CAPABILITY];
+    const BATCHES: &[&str] = &[SUPPORTED_CAPABILITY, BATCH_CAPABILITY];
+    if mode == Mode::EmitBatchesOnPing {
+        BATCHES
+    } else {
+        LIFECYCLE
+    }
+}
+
+fn emit_demo_batches(
+    sender: &mpsc::SyncSender<WorkerDataEnvelope>,
+    sequence: &mut u64,
+    session_id: u64,
+) -> Result<(), ()> {
+    for tick in 0..32_u64 {
+        let batch = VisualFrameBatch::new(
+            tick,
+            vec![0, 1],
+            vec![tick as f64, tick as f64 + 4.5],
+            vec![0.0, 0.0],
+            vec![0.0, 0.0],
+            vec![4.5, 4.5],
+            vec![1.8, 1.8],
+        )
+        .map_err(|_| ())?;
+        sender
+            .send(WorkerDataEnvelope::new(
+                session_id,
+                *sequence,
+                WorkerDataPayload::VisualFrame(batch),
+            ))
+            .map_err(|_| ())?;
+        *sequence = (*sequence).saturating_add(1);
+    }
+    for tick in 0..12_u64 {
+        let sample = MetricSample::new(tick, "stub.completed_agents", "1.0.0", tick as f64)
+            .map_err(|_| ())?;
+        let batch = MetricBatch::new(vec![sample]).map_err(|_| ())?;
+        sender
+            .send(WorkerDataEnvelope::new(
+                session_id,
+                *sequence,
+                WorkerDataPayload::MetricBatch(batch),
+            ))
+            .map_err(|_| ())?;
+        *sequence = (*sequence).saturating_add(1);
+    }
+    Ok(())
 }
 
 fn respond_error(

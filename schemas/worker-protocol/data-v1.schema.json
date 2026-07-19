@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roadsim.dev/schemas/worker-protocol/data-v1.schema.json",
+  "title": "RoadSim worker data protocol v1 baseline",
+  "type": "object",
+  "required": ["protocol_version", "session_id", "sequence", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "session_id": { "type": "integer", "minimum": 0 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "payload": {
+      "oneOf": [
+        { "$ref": "#/$defs/visual_frame" },
+        { "$ref": "#/$defs/metric_batch" },
+        { "$ref": "#/$defs/terminal" }
+      ]
+    }
+  },
+  "$defs": {
+    "visual_frame": {
+      "type": "object",
+      "required": ["type", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "visual_frame" },
+        "data": {
+          "type": "object",
+          "required": ["tick", "agent_ids", "x_m", "y_m", "heading_rad", "length_m", "width_m"],
+          "additionalProperties": false,
+          "properties": {
+            "tick": { "type": "integer", "minimum": 0 },
+            "agent_ids": {
+              "type": "array",
+              "maxItems": 100000,
+              "items": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+            },
+            "x_m": { "$ref": "#/$defs/finite_array" },
+            "y_m": { "$ref": "#/$defs/finite_array" },
+            "heading_rad": { "$ref": "#/$defs/finite_array" },
+            "length_m": { "$ref": "#/$defs/positive_array" },
+            "width_m": { "$ref": "#/$defs/positive_array" }
+          }
+        }
+      }
+    },
+    "finite_array": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": { "type": "number" }
+    },
+    "positive_array": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": { "type": "number", "exclusiveMinimum": 0 }
+    },
+    "metric_batch": {
+      "type": "object",
+      "required": ["type", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "metric_batch" },
+        "data": {
+          "type": "object",
+          "required": ["samples"],
+          "additionalProperties": false,
+          "properties": {
+            "samples": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4096,
+              "items": { "$ref": "#/$defs/metric_sample" }
+            }
+          }
+        }
+      }
+    },
+    "metric_sample": {
+      "type": "object",
+      "required": ["tick", "definition_id", "definition_version", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "tick": { "type": "integer", "minimum": 0 },
+        "definition_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9._-]+$"
+        },
+        "definition_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._+-]+$"
+        },
+        "value": { "type": "number" }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "required": ["type", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "terminal" },
+        "data": {
+          "type": "object",
+          "required": ["status", "diagnostic"],
+          "additionalProperties": false,
+          "properties": {
+            "status": { "enum": ["completed", "cancelled", "failed"] },
+            "diagnostic": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "enum": [
+                    "worker.protocol.version_mismatch",
+                    "worker.protocol.authentication_failed",
+                    "worker.protocol.handshake_required",
+                    "worker.capability.unsupported",
+                    "worker.capability.manifest_invalid",
+                    "worker.protocol.sequence_out_of_order",
+                    "worker.session.already_active",
+                    "worker.session.not_found",
+                    "worker.protocol.request_invalid"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

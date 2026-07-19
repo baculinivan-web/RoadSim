@@ -173,3 +173,9 @@ E09 worker control prototype не добавляет внешних зависи
 filesystem workdir в этом срезе не добавлены. JSON предназначен только для
 малого control plane; E09-T08 обязан отдельно рассмотреть зависимости и license
 impact batch transport.
+
+E09-T08 baseline также не добавляет dependency: отдельный inherited data pipe,
+SoA DTO, latest-frame slot и reliable bounded queue используют `std` и тот же
+bounded `serde_json`. Это измерительный baseline, а не предварительное принятие
+JSON вместо Arrow IPC/shared memory; любая такая замена проходит новый MSRV,
+license, unsafe/native и vulnerability review по ADR-Q09.

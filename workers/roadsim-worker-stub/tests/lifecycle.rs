@@ -1,6 +1,8 @@
-use roadsim_worker_client::{WorkerClient, WorkerClientConfig, WorkerClientErrorCode};
+use roadsim_worker_client::{
+    ReliableWorkerEvent, WorkerClient, WorkerClientConfig, WorkerClientErrorCode,
+};
 use roadsim_worker_protocol::{
-    AuthToken, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload,
+    AuthToken, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload, TerminalStatus,
     WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode, read_frame, write_frame,
 };
 use std::{
@@ -140,4 +142,76 @@ fn hung_worker_is_killed_at_request_timeout() {
     let error = client.ping(Duration::from_millis(100)).unwrap_err();
     assert_eq!(error.code(), WorkerClientErrorCode::Timeout);
     assert!(started.elapsed() < TIMEOUT);
+}
+
+#[test]
+fn visual_frames_drop_to_latest_while_metrics_and_terminal_remain_reliable() {
+    let mut client =
+        WorkerClient::spawn(config(token("a")).with_argument("--emit-batches-on-ping")).unwrap();
+    let hello = client
+        .handshake(
+            vec![
+                "worker.stub.lifecycle".to_owned(),
+                "worker.stub.batches".to_owned(),
+            ],
+            TIMEOUT,
+        )
+        .unwrap();
+    assert!(
+        hello
+            .capabilities
+            .contains(&"worker.stub.batches".to_owned())
+    );
+    client.open_session(42, TIMEOUT).unwrap();
+    client.ping(TIMEOUT).unwrap();
+    client.cancel_session(42, TIMEOUT).unwrap();
+
+    let mut observed_ticks = Vec::new();
+    for _ in 0..12 {
+        let event = client.recv_reliable_event_timeout(TIMEOUT).unwrap();
+        let ReliableWorkerEvent::MetricBatch { batch, .. } = event else {
+            panic!("metric batch expected before terminal event");
+        };
+        observed_ticks.push(batch.samples()[0].tick());
+        assert_eq!(batch.samples()[0].definition_version(), "1.0.0");
+    }
+    assert_eq!(observed_ticks, (0..12).collect::<Vec<_>>());
+
+    let (session_id, sequence, visual) = client.take_latest_visual_frame().unwrap();
+    assert_eq!(session_id, 42);
+    assert_eq!(visual.tick(), 31);
+    assert_eq!(visual.agent_ids(), [0, 1]);
+    assert_eq!(sequence, 32);
+    assert_eq!(client.dropped_visual_frames(), 31);
+    assert_eq!(client.data_stream_error(), None);
+
+    let event = client.recv_reliable_event_timeout(TIMEOUT).unwrap();
+    let ReliableWorkerEvent::Terminal { event, .. } = event else {
+        panic!("terminal event expected after cancellation");
+    };
+    assert_eq!(event.status, TerminalStatus::Cancelled);
+    client.shutdown(TIMEOUT).unwrap();
+}
+
+#[test]
+fn graceful_shutdown_preserves_reliable_batches_already_in_the_pipe() {
+    let mut client =
+        WorkerClient::spawn(config(token("a")).with_argument("--emit-batches-on-ping")).unwrap();
+    client
+        .handshake(vec!["worker.stub.batches".to_owned()], TIMEOUT)
+        .unwrap();
+    client.open_session(77, TIMEOUT).unwrap();
+    client.ping(TIMEOUT).unwrap();
+    client.shutdown(TIMEOUT).unwrap();
+
+    let (session_id, _, visual) = client.take_latest_visual_frame().unwrap();
+    assert_eq!(session_id, 77);
+    assert_eq!(visual.tick(), 31);
+    let metrics: Vec<_> = (0..12)
+        .map(|_| client.try_recv_reliable_event().unwrap())
+        .collect();
+    assert!(metrics.iter().all(|event| matches!(
+        event,
+        ReliableWorkerEvent::MetricBatch { session_id: 77, .. }
+    )));
 }

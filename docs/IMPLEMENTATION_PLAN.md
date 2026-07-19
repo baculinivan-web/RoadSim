@@ -415,21 +415,31 @@ lane graph, junctions и весь capability manifest остаются след�
 in-memory fake backend. Handshake, capability preflight, compile/runtime/
 unsupported errors, pause/resume/cancel, terminal semantics, bounded idempotency
 keys и deterministic frame batches покрыты contract/property tests; root seed
-substreams закреплены known vectors. Worker protocol, metric batching, watchdog,
-resource directories и общий suite для внешних backend остаются невыполненными.
+substreams закреплены known vectors. Production worker adapter, accepted batch
+transport, periodic watchdog policy, resource directories и
+общий suite для внешних backend остаются невыполненными.
 
 Статус E09-T04…T07: 🟡 добавлен macOS-tested cross-platform child-process
 prototype из ADR-018 (`proposed`): inherited stdin/stdout, versioned bounded JSON
 control frames, one-time token, correlation, capability rejection и
 crash/hang/timeout/cancel harness. Acceptance остаётся частичным до Windows/Linux
 CI evidence, architecture/security review и принятия transport ADR. State/metric
-batch transport, backpressure и workdir/resource isolation не реализованы.
+production transport/benchmark, accepted backpressure decision и
+workdir/resource isolation не реализованы.
+
+Статус E09-T08: 🟡 ADR-019 (`proposed`) добавляет исполняемый dual-pipe baseline:
+SoA visual frames используют latest-wins с observable drop counter, versioned
+metrics и terminal events идут через отдельную bounded reliable queue с
+backpressure. macOS child-process contract test доказывает 32→1 visual drop и
+12/12 ordered metrics без потерь. Arrow/shared-memory выбор, benchmark и
+Windows/Linux CI evidence остаются до принятия ADR-Q09.
 
 Preview вертикального пути E11: desktop наблюдаемо выполняет встроенный Design
 Model → CSN → fake backend → 18-agent frame overlay и предоставляет
 Start/Pause/Resume/Stop с unit lifecycle tests. Agent frames содержат метрический
-footprint 4,5 × 1,8 м и viewport рисует ориентированный прямоугольник. Native macOS smoke за два GPU
-frame подтверждает `simulation_state=running tick=0 agents=18`. Это ранняя
+footprint 4,5 × 1,8 м и viewport рисует ориентированный прямоугольник. Native
+macOS smoke за два GPU frame подтверждает
+`simulation_state=running tick=0 agents=18`. Это ранняя
 проверка границ, а не закрытие E11-T01…T03: production orchestration всё ещё
 зависит от E10 worker/state batches, frame adapter не instanced и SUMO отсутствует.
 

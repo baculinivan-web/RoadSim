@@ -5,22 +5,29 @@
 //! ordering explicit without an async runtime.
 
 use roadsim_worker_protocol::{
-    AuthToken, FrameError, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload,
-    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode, capabilities_are_valid,
-    read_frame, write_frame,
+    AuthToken, DataValidationErrorCode, FrameError, FrameErrorCode, MetricBatch, RequestEnvelope,
+    RequestPayload, ResponseEnvelope, ResponsePayload, TerminalEvent, VisualFrameBatch,
+    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataPayload, WorkerDiagnosticCode,
+    capabilities_are_valid, read_data_frame, read_frame, write_frame,
 };
 use std::{
+    collections::VecDeque,
     error::Error,
     ffi::OsString,
     fmt,
     path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver, RecvTimeoutError, TrySendError},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, TryRecvError, TrySendError},
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
 const RESPONSE_QUEUE_CAPACITY: usize = 8;
+const RELIABLE_DATA_QUEUE_CAPACITY: usize = 8;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Clone, Debug)]
@@ -148,11 +155,76 @@ pub struct WorkerHello {
     pub capabilities: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ReliableWorkerEvent {
+    MetricBatch {
+        session_id: u64,
+        sequence: u64,
+        batch: MetricBatch,
+    },
+    Terminal {
+        session_id: u64,
+        sequence: u64,
+        event: TerminalEvent,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DataStreamErrorCode {
+    Frame(FrameErrorCode),
+    Validation(DataValidationErrorCode),
+    SequenceOutOfOrder,
+}
+
+impl DataStreamErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Frame(code) => code.as_str(),
+            Self::Validation(code) => code.as_str(),
+            Self::SequenceOutOfOrder => "worker.data.sequence_out_of_order",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DataStreamState {
+    latest_visual: Arc<Mutex<Option<(u64, u64, VisualFrameBatch)>>>,
+    dropped_visual: Arc<AtomicU64>,
+    error: Arc<Mutex<Option<DataStreamErrorCode>>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl DataStreamState {
+    fn new() -> Self {
+        Self {
+            latest_visual: Arc::new(Mutex::new(None)),
+            dropped_visual: Arc::new(AtomicU64::new(0)),
+            error: Arc::new(Mutex::new(None)),
+            stop: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn record_error(&self, error: DataStreamErrorCode) {
+        let mut current = self
+            .error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.is_none() {
+            *current = Some(error);
+        }
+    }
+}
+
 pub struct WorkerClient {
     child: Child,
     writer: Option<ChildStdin>,
     responses: Receiver<Result<ResponseEnvelope, FrameError>>,
+    reliable_events: Receiver<ReliableWorkerEvent>,
+    reliable_backlog: Mutex<VecDeque<ReliableWorkerEvent>>,
+    data_state: DataStreamState,
     reader_thread: Option<JoinHandle<()>>,
+    data_reader_thread: Option<JoinHandle<()>>,
     auth_token: AuthToken,
     protocol_version: u32,
     next_request_id: u64,
@@ -167,7 +239,7 @@ impl WorkerClient {
             .env(WORKER_TOKEN_ENV, config.auth_token.expose_for_transport())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| WorkerClientError::new(WorkerClientErrorCode::SpawnFailed))?;
 
@@ -176,6 +248,10 @@ impl WorkerClient {
             return Err(WorkerClientError::new(WorkerClientErrorCode::MissingPipe));
         };
         let Some(mut reader) = child.stdout.take() else {
+            terminate_child(&mut child);
+            return Err(WorkerClientError::new(WorkerClientErrorCode::MissingPipe));
+        };
+        let Some(mut data_reader) = child.stderr.take() else {
             terminate_child(&mut child);
             return Err(WorkerClientError::new(WorkerClientErrorCode::MissingPipe));
         };
@@ -193,12 +269,77 @@ impl WorkerClient {
                 }
             }
         });
+        let data_state = DataStreamState::new();
+        let data_thread_state = data_state.clone();
+        let (reliable_sender, reliable_events) = mpsc::sync_channel(RELIABLE_DATA_QUEUE_CAPACITY);
+        let data_reader_thread = thread::spawn(move || {
+            let mut last_sequence = None;
+            loop {
+                let envelope = match read_data_frame(&mut data_reader) {
+                    Ok(envelope) => envelope,
+                    Err(error) if error.code() == FrameErrorCode::EndOfStream => break,
+                    Err(error) => {
+                        data_thread_state.record_error(DataStreamErrorCode::Frame(error.code()));
+                        break;
+                    }
+                };
+                if let Err(error) = envelope.validate() {
+                    data_thread_state.record_error(DataStreamErrorCode::Validation(error.code()));
+                    break;
+                }
+                if last_sequence.is_some_and(|last| envelope.sequence <= last) {
+                    data_thread_state.record_error(DataStreamErrorCode::SequenceOutOfOrder);
+                    break;
+                }
+                last_sequence = Some(envelope.sequence);
+                match envelope.payload {
+                    WorkerDataPayload::VisualFrame(batch) => {
+                        let mut latest = data_thread_state
+                            .latest_visual
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        if latest
+                            .replace((envelope.session_id, envelope.sequence, batch))
+                            .is_some()
+                        {
+                            data_thread_state
+                                .dropped_visual
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    WorkerDataPayload::MetricBatch(batch) => {
+                        let event = ReliableWorkerEvent::MetricBatch {
+                            session_id: envelope.session_id,
+                            sequence: envelope.sequence,
+                            batch,
+                        };
+                        if !send_reliable(&reliable_sender, &data_thread_state, event) {
+                            break;
+                        }
+                    }
+                    WorkerDataPayload::Terminal(event) => {
+                        let event = ReliableWorkerEvent::Terminal {
+                            session_id: envelope.session_id,
+                            sequence: envelope.sequence,
+                            event,
+                        };
+                        if !send_reliable(&reliable_sender, &data_thread_state, event) {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
 
         Ok(Self {
             child,
             writer: Some(writer),
             responses,
+            reliable_events,
+            reliable_backlog: Mutex::new(VecDeque::new()),
+            data_state,
             reader_thread: Some(reader_thread),
+            data_reader_thread: Some(data_reader_thread),
             auth_token: config.auth_token,
             protocol_version: config.protocol_version,
             next_request_id: 1,
@@ -277,13 +418,66 @@ impl WorkerClient {
             return self.unexpected_response();
         }
         self.writer.take();
-        if !wait_for_exit(&mut self.child, timeout) {
+        if !self.wait_for_exit_and_drain(timeout) {
             self.stop_process();
             return Err(WorkerClientError::new(WorkerClientErrorCode::Timeout));
         }
+        self.data_state.stop.store(true, Ordering::Release);
         self.stopped = true;
         self.join_reader();
         Ok(())
+    }
+
+    /// Takes the newest visual frame. Replaced intermediate frames are counted,
+    /// making renderer backpressure observable rather than silent.
+    #[must_use]
+    pub fn take_latest_visual_frame(&self) -> Option<(u64, u64, VisualFrameBatch)> {
+        self.data_state
+            .latest_visual
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+    }
+
+    #[must_use]
+    pub fn dropped_visual_frames(&self) -> u64 {
+        self.data_state.dropped_visual.load(Ordering::Relaxed)
+    }
+
+    pub fn try_recv_reliable_event(&self) -> Result<ReliableWorkerEvent, TryRecvError> {
+        if let Some(event) = self
+            .reliable_backlog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front()
+        {
+            return Ok(event);
+        }
+        self.reliable_events.try_recv()
+    }
+
+    pub fn recv_reliable_event_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<ReliableWorkerEvent, RecvTimeoutError> {
+        if let Some(event) = self
+            .reliable_backlog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front()
+        {
+            return Ok(event);
+        }
+        self.reliable_events.recv_timeout(timeout)
+    }
+
+    #[must_use]
+    pub fn data_stream_error(&self) -> Option<DataStreamErrorCode> {
+        *self
+            .data_state
+            .error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn request(
@@ -361,6 +555,7 @@ impl WorkerClient {
     }
 
     fn stop_process(&mut self) {
+        self.data_state.stop.store(true, Ordering::Release);
         self.writer.take();
         terminate_child(&mut self.child);
         self.stopped = true;
@@ -374,9 +569,46 @@ impl WorkerClient {
         ))
     }
 
+    fn wait_for_exit_and_drain(&mut self, timeout: Duration) -> bool {
+        let started = Instant::now();
+        loop {
+            self.drain_reliable_queue();
+            let child_exited = match self.child.try_wait() {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(_) => return false,
+            };
+            let data_reader_finished = self
+                .data_reader_thread
+                .as_ref()
+                .is_none_or(JoinHandle::is_finished);
+            if child_exited && data_reader_finished {
+                self.drain_reliable_queue();
+                return true;
+            }
+            if started.elapsed() >= timeout {
+                return false;
+            }
+            thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+    }
+
+    fn drain_reliable_queue(&self) {
+        let mut backlog = self
+            .reliable_backlog
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while let Ok(event) = self.reliable_events.try_recv() {
+            backlog.push_back(event);
+        }
+    }
+
     fn join_reader(&mut self) {
         if let Some(reader_thread) = self.reader_thread.take() {
             let _ = reader_thread.join();
+        }
+        if let Some(data_reader_thread) = self.data_reader_thread.take() {
+            let _ = data_reader_thread.join();
         }
     }
 }
@@ -391,18 +623,27 @@ impl Drop for WorkerClient {
     }
 }
 
-fn wait_for_exit(child: &mut Child, timeout: Duration) -> bool {
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) if started.elapsed() < timeout => thread::sleep(PROCESS_POLL_INTERVAL),
-            Ok(None) | Err(_) => return false,
-        }
-    }
-}
-
 fn terminate_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn send_reliable(
+    sender: &mpsc::SyncSender<ReliableWorkerEvent>,
+    state: &DataStreamState,
+    mut event: ReliableWorkerEvent,
+) -> bool {
+    loop {
+        match sender.try_send(event) {
+            Ok(()) => return true,
+            Err(TrySendError::Full(returned)) => {
+                if state.stop.load(Ordering::Acquire) {
+                    return false;
+                }
+                event = returned;
+                thread::sleep(PROCESS_POLL_INTERVAL);
+            }
+            Err(TrySendError::Disconnected(_)) => return false,
+        }
+    }
 }

@@ -71,6 +71,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   process pipes, одноразовый handshake token, capability preflight, correlation
   и lifecycle harness для cancel/crash/hang/timeout без сетевого listener. Это
   первый control protocol v1; предыдущей версии и migration нет.
+- Добавлен data protocol v1 baseline на отдельном inherited pipe: SoA visual
+  batches допускают наблюдаемое latest-wins dropping, а versioned metrics и
+  terminal events используют bounded reliable backpressure без per-agent IPC.
 
 ### Changed
 
