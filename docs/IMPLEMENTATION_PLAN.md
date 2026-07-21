@@ -470,20 +470,20 @@ macOS smoke за два GPU frame подтверждает
 | E10-T11 | Packaging spike on three OS | T01–T02 | packages/report | clean-machine worker starts or limitation documented |
 | E10-T12 | License distribution review | T01, T11 | approved packaging decision | EPL notices/source obligations recorded |
 
-Статус E10-T01: 🟡 exact SUMO `1.27.1` source tag/commit, headless build matrix и
+Статус E10-T01: 🟢 exact SUMO `1.27.1` source tag/commit, headless build matrix и
 pending license boundary закреплены machine-readable manifest с CI regression
-guard. Worker protocol v2 сообщает exact engine name/version/build revision и
-блокирует mismatch до session; child-process test доказывает contract на stub.
-Реальное чтение версии из libsumo и clean-machine artifacts остаются соответственно
-в E10-T02 и E10-T11, поэтому SUMO acceptance ещё не объявляется зелёным.
+guard. Worker protocol v3 сообщает exact engine name/version/build revision,
+блокирует mismatch до session, а macOS arm64 smoke подтверждает runtime version
+из libsumo. Clean-machine artifacts остаются отдельной задачей E10-T11.
 
-Статус E10-T02: 🟡 добавлен отдельный `sumo-worker`, versioned native C ABI и
+Статус E10-T02: 🟢 добавлен отдельный `sumo-worker`, versioned native C ABI и
 явный protocol v3 lifecycle `OpenSession → StepSession → CloseSession`.
 Cross-process ABI fixture доказывает ordered 3+2 steps, close и изоляцию native
 abort; missing/mismatched engine блокируется до session. Production C++ bridge
-вызывает libsumo `getVersion/start/step/close`, но exact headless `1.27.1`
-artifact пока не собран и реальный `.sumocfg` smoke отсутствует — fixture не
-объявляется заменой этого acceptance.
+вызывает libsumo `getVersion/start/step/close`; opt-in test на macOS arm64
+генерирует минимальную сеть, запускает exact headless `1.27.1`, выполняет пять
+tick и завершает recoverable run как `Completed`. Platform packaging и
+clean-machine matrix не приписываются T02 и остаются E10-T11.
 
 Для задач T03–T07 обязательны `unsupported_feature` fixtures. Экспорт не должен удалять неподдерживаемые сущности.
 

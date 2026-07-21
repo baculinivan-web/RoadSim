@@ -82,8 +82,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   pending distribution status; CI отклоняет floating/short pin, optional GPL
   extras и неполную NFR-030 matrix.
 - Добавлен отдельный `sumo-worker` и versioned native C ABI для exact libsumo
-  identity и lifecycle start/step/close. ABI fixture проверяет process isolation;
-  реальный headless SUMO smoke ещё не заявлен.
+  identity и lifecycle start/step/close. ABI fixture проверяет process isolation,
+  а opt-in macOS arm64 smoke собирает минимальную сеть и выполняет реальный
+  пятишаговый run на headless SUMO `1.27.1`; platform packaging остаётся E10-T11.
 
 ### Changed
 

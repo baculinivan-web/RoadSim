@@ -77,6 +77,12 @@ python3 scripts/ci/check_sumo_pin.py
 python3 scripts/ci/test_sumo_pin.py -v
 ```
 
+Реальный libsumo lifecycle не запускается в обычном Rust gate без native
+artifact. Его opt-in команда и обязательные `ROADSIM_SUMO_BRIDGE` /
+`ROADSIM_NETCONVERT` описаны в [SUMO build boundary](sumo-build.md). Test не
+подменяется ABI fixture и остаётся `ignored`, пока E10-T11 не предоставит
+проверяемые platform packages для CI matrix.
+
 ## SBOM и license inventory
 
 Supply-chain artifact содержит:

@@ -64,9 +64,27 @@ cmake -S workers/roadsim-sumo-worker/native -B <build-dir> \
 cmake --build <build-dir> --config Release
 ```
 
-ABI fixture в workspace проверяет loader/lifecycle/crash isolation, но не
-считается SUMO smoke. E10-T02 остаётся частичным, пока production bridge не
-собран против exact headless artifact и не запущен на минимальном `.sumocfg`.
+`ROADSIM_SUMO_LIBRARY_DIR` можно передать отдельно, если `libsumocpp` находится
+не в `<exact-source-build-root>/bin`. ABI fixture в workspace проверяет
+loader/lifecycle/crash isolation отдельно от реального engine smoke.
+
+Реальный opt-in smoke генерирует сеть из `fixtures/sumo/minimal`, запускает
+`sumo-worker`, сверяет runtime identity и выполняет пять tick через
+`OpenSession → StepSession → CloseSession`:
+
+```text
+ROADSIM_SUMO_BRIDGE=<absolute-path-to-libroadsim_sumo_bridge> \
+ROADSIM_NETCONVERT=<absolute-path-to-netconvert-1.27.1> \
+cargo +1.88.0 test -p sumo-worker --test lifecycle \
+  real_libsumo_runs_minimal_start_step_close -- \
+  --ignored --nocapture --test-threads=1
+```
+
+Этот test успешно выполнен на macOS arm64 против headless libsumo, собранного
+из exact commit `7717f2379d9e314a0c81c5cec748444de06a2a91`. Он закрывает
+core lifecycle E10-T02, но не является clean-machine/package evidence для
+Windows, macOS x64 и Linux; воспроизводимый builder, packages и checksums
+остаются в E10-T11.
 
 ## License boundary
 
