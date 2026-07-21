@@ -78,10 +78,16 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   запускается в отдельном generated workdir, interrupted state восстанавливается
   как `Incomplete`, а retention не удаляет `Failed/Incomplete` молча. Это первый
   marker format; предыдущей версии и migration нет.
+- Закреплён SUMO `1.27.1` source tag/commit, headless four-target build matrix и
+  pending distribution status; CI отклоняет floating/short pin, optional GPL
+  extras и неполную NFR-030 matrix.
 
 ### Changed
 
-Нет.
+- Worker control/data protocol повышен с v1 до v2: handshake обязательно
+  публикует bounded exact engine name/version/build revision и может потребовать
+  точное совпадение до открытия session. V1 schemas сохранены для истории;
+  runtime migration/downgrade отсутствует, несовпадение версии отклоняется.
 
 ### Fixed
 

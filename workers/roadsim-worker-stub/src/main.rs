@@ -1,8 +1,8 @@
 use roadsim_worker_protocol::{
-    AuthToken, MetricBatch, MetricSample, RequestEnvelope, RequestPayload, ResponseEnvelope,
-    ResponsePayload, TerminalEvent, TerminalStatus, VisualFrameBatch, WORKER_PROTOCOL_VERSION,
-    WORKER_TOKEN_ENV, WorkerDataEnvelope, WorkerDataPayload, WorkerDiagnosticCode,
-    capabilities_are_valid, read_frame, write_data_frame, write_frame,
+    AuthToken, EngineIdentity, MetricBatch, MetricSample, RequestEnvelope, RequestPayload,
+    ResponseEnvelope, ResponsePayload, TerminalEvent, TerminalStatus, VisualFrameBatch,
+    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataEnvelope, WorkerDataPayload,
+    WorkerDiagnosticCode, capabilities_are_valid, read_frame, write_data_frame, write_frame,
 };
 use std::{env, io, process::ExitCode, sync::mpsc, thread};
 
@@ -122,6 +122,7 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
         if let RequestPayload::Handshake {
             auth_token,
             mut required_capabilities,
+            required_engine,
         } = request.payload.clone()
         {
             if handshake_complete {
@@ -159,6 +160,39 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                 }
                 continue;
             }
+            let engine = stub_engine_identity();
+            if required_engine
+                .as_ref()
+                .is_some_and(|required| !required.is_valid())
+            {
+                if respond_error(
+                    &mut writer,
+                    &request,
+                    WorkerDiagnosticCode::InvalidRequest,
+                    Vec::new(),
+                )
+                .is_err()
+                {
+                    return ExitCode::from(74);
+                }
+                continue;
+            }
+            if required_engine
+                .as_ref()
+                .is_some_and(|required| required != &engine)
+            {
+                if respond_error(
+                    &mut writer,
+                    &request,
+                    WorkerDiagnosticCode::EngineIdentityMismatch,
+                    Vec::new(),
+                )
+                .is_err()
+                {
+                    return ExitCode::from(74);
+                }
+                continue;
+            }
             required_capabilities.sort_unstable();
             required_capabilities.dedup();
             let unsupported: Vec<_> = required_capabilities
@@ -185,6 +219,8 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                     &request,
                     ResponsePayload::HandshakeAccepted {
                         worker_name: "roadsim-worker-stub".to_owned(),
+                        worker_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        engine,
                         capabilities: supported_capabilities(mode)
                             .iter()
                             .map(|capability| (*capability).to_owned())
@@ -315,6 +351,11 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
             return ExitCode::SUCCESS;
         }
     }
+}
+
+fn stub_engine_identity() -> EngineIdentity {
+    EngineIdentity::new("roadsim.stub", "1", "builtin-v1")
+        .expect("static stub engine identity must be valid")
 }
 
 fn workdir_marker_is_present() -> bool {

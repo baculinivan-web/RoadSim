@@ -44,8 +44,9 @@ platform/dependency footprint без benchmark реального collector.
 - stdin/stdout остаются control pipe ADR-018;
 - inherited stderr полностью резервируется для data frames и не используется
   как human log stream;
-- data frame имеет отдельный limit 16 MiB и schema
-  `schemas/worker-protocol/data-v1.schema.json`;
+- data frame имеет отдельный limit 16 MiB; исторический v1 сохранён, текущий
+  `schemas/worker-protocol/data-v2.schema.json` синхронизирован с control
+  handshake version;
 - envelope содержит protocol/session/sequence, payload — visual frame, metric
   batch либо terminal event;
 - visual frame использует SoA и максимум 100 000 агентов; все arrays имеют одну

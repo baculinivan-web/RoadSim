@@ -73,6 +73,8 @@ python3 scripts/ci/check_dependency_graph.py \
   --metadata target/cargo-metadata.json \
   --policy supply-chain/dependency-policy.toml
 python3 scripts/ci/test_dependency_graph.py -v
+python3 scripts/ci/check_sumo_pin.py
+python3 scripts/ci/test_sumo_pin.py -v
 ```
 
 ## SBOM и license inventory

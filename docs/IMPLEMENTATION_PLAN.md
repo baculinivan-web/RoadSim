@@ -470,6 +470,13 @@ macOS smoke за два GPU frame подтверждает
 | E10-T11 | Packaging spike on three OS | T01–T02 | packages/report | clean-machine worker starts or limitation documented |
 | E10-T12 | License distribution review | T01, T11 | approved packaging decision | EPL notices/source obligations recorded |
 
+Статус E10-T01: 🟡 exact SUMO `1.27.1` source tag/commit, headless build matrix и
+pending license boundary закреплены machine-readable manifest с CI regression
+guard. Worker protocol v2 сообщает exact engine name/version/build revision и
+блокирует mismatch до session; child-process test доказывает contract на stub.
+Реальное чтение версии из libsumo и clean-machine artifacts остаются соответственно
+в E10-T02 и E10-T11, поэтому SUMO acceptance ещё не объявляется зелёным.
+
 Для задач T03–T07 обязательны `unsupported_feature` fixtures. Экспорт не должен удалять неподдерживаемые сущности.
 
 ## 19. Epic E11 — Simulation UX и динамический renderer

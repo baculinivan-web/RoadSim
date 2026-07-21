@@ -63,6 +63,10 @@ jobs:
           --policy supply-chain/dependency-policy.toml
       - name: Prove the forbidden-edge regression fixture is rejected
         run: python3 scripts/ci/test_dependency_graph.py -v
+      - name: Verify pinned SUMO build contract
+        run: |
+          python3 scripts/ci/check_sumo_pin.py
+          python3 scripts/ci/test_sumo_pin.py -v
 
   platform:
     name: Build and smoke (${{ matrix.name }})

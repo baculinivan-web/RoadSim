@@ -7,11 +7,14 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use std::{error::Error, fmt, io::Read, io::Write};
 
-pub const WORKER_PROTOCOL_VERSION: u32 = 1;
+pub const WORKER_PROTOCOL_VERSION: u32 = 2;
 pub const MAX_CONTROL_FRAME_BYTES: usize = 1_048_576;
 pub const MAX_DATA_FRAME_BYTES: usize = 16_777_216;
 pub const MAX_CAPABILITIES: usize = 64;
 pub const MAX_CAPABILITY_ID_BYTES: usize = 128;
+pub const MAX_ENGINE_NAME_BYTES: usize = 128;
+pub const MAX_ENGINE_VERSION_BYTES: usize = 64;
+pub const MAX_ENGINE_BUILD_REVISION_BYTES: usize = 128;
 pub const MAX_VISUAL_AGENTS_PER_BATCH: usize = 100_000;
 pub const MAX_METRIC_SAMPLES_PER_BATCH: usize = 4_096;
 pub const MAX_METRIC_DEFINITION_ID_BYTES: usize = 128;
@@ -91,6 +94,70 @@ impl fmt::Display for TokenError {
 
 impl Error for TokenError {}
 
+/// Exact simulation engine identity negotiated before a worker session opens.
+///
+/// `build_revision` identifies the source/build input behind a release version;
+/// release versions alone are not sufficient for reproducible run manifests.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineIdentity {
+    name: String,
+    version: String,
+    build_revision: String,
+}
+
+impl EngineIdentity {
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        build_revision: impl Into<String>,
+    ) -> Result<Self, EngineIdentityError> {
+        let identity = Self {
+            name: name.into(),
+            version: version.into(),
+            build_revision: build_revision.into(),
+        };
+        if identity.is_valid() {
+            Ok(identity)
+        } else {
+            Err(EngineIdentityError)
+        }
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    #[must_use]
+    pub fn build_revision(&self) -> &str {
+        &self.build_revision
+    }
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        machine_identifier_is_valid(&self.name, MAX_ENGINE_NAME_BYTES)
+            && version_component_is_valid(&self.version, MAX_ENGINE_VERSION_BYTES)
+            && version_component_is_valid(&self.build_revision, MAX_ENGINE_BUILD_REVISION_BYTES)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineIdentityError;
+
+impl fmt::Display for EngineIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("worker engine identity is invalid")
+    }
+}
+
+impl Error for EngineIdentityError {}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum WorkerDiagnosticCode {
     #[serde(rename = "worker.protocol.version_mismatch")]
@@ -103,6 +170,8 @@ pub enum WorkerDiagnosticCode {
     UnsupportedCapability,
     #[serde(rename = "worker.capability.manifest_invalid")]
     InvalidCapabilityManifest,
+    #[serde(rename = "worker.engine.identity_mismatch")]
+    EngineIdentityMismatch,
     #[serde(rename = "worker.protocol.sequence_out_of_order")]
     SequenceOutOfOrder,
     #[serde(rename = "worker.session.already_active")]
@@ -122,6 +191,7 @@ impl WorkerDiagnosticCode {
             Self::HandshakeRequired => "worker.protocol.handshake_required",
             Self::UnsupportedCapability => "worker.capability.unsupported",
             Self::InvalidCapabilityManifest => "worker.capability.manifest_invalid",
+            Self::EngineIdentityMismatch => "worker.engine.identity_mismatch",
             Self::SequenceOutOfOrder => "worker.protocol.sequence_out_of_order",
             Self::SessionAlreadyActive => "worker.session.already_active",
             Self::SessionNotFound => "worker.session.not_found",
@@ -170,6 +240,7 @@ pub enum RequestPayload {
     Handshake {
         auth_token: AuthToken,
         required_capabilities: Vec<String>,
+        required_engine: Option<EngineIdentity>,
     },
     Ping,
     OpenSession,
@@ -210,6 +281,8 @@ impl ResponseEnvelope {
 pub enum ResponsePayload {
     HandshakeAccepted {
         worker_name: String,
+        worker_version: String,
+        engine: EngineIdentity,
         capabilities: Vec<String>,
     },
     Pong,
@@ -579,15 +652,30 @@ impl Error for DataValidationError {}
 #[must_use]
 pub fn capabilities_are_valid(capabilities: &[String]) -> bool {
     capabilities.len() <= MAX_CAPABILITIES
-        && capabilities.iter().all(|capability| {
-            !capability.is_empty()
-                && capability.len() <= MAX_CAPABILITY_ID_BYTES
-                && capability.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'.' | b'_' | b'-')
-                })
+        && capabilities
+            .iter()
+            .all(|capability| machine_identifier_is_valid(capability, MAX_CAPABILITY_ID_BYTES))
+}
+
+#[must_use]
+pub fn worker_version_is_valid(version: &str) -> bool {
+    version_component_is_valid(version, MAX_ENGINE_VERSION_BYTES)
+}
+
+fn machine_identifier_is_valid(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum_bytes
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
         })
+}
+
+fn version_component_is_valid(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum_bytes
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -720,6 +808,9 @@ mod tests {
             RequestPayload::Handshake {
                 auth_token: token("a"),
                 required_capabilities: vec!["worker.stub.lifecycle".to_owned()],
+                required_engine: Some(
+                    EngineIdentity::new("eclipse.sumo", "1.27.1", "7717f2379d9e").unwrap(),
+                ),
             },
         );
         let mut frame = Vec::new();
@@ -773,18 +864,37 @@ mod tests {
     }
 
     #[test]
+    fn engine_identity_is_exact_bounded_and_machine_safe() {
+        let identity = EngineIdentity::new(
+            "eclipse.sumo",
+            "1.27.1",
+            "7717f2379d9e314a0c81c5cec748444de06a2a91",
+        )
+        .unwrap();
+        assert_eq!(identity.name(), "eclipse.sumo");
+        assert_eq!(identity.version(), "1.27.1");
+        assert_eq!(
+            identity.build_revision(),
+            "7717f2379d9e314a0c81c5cec748444de06a2a91"
+        );
+        assert!(EngineIdentity::new("SUMO unsafe", "1.27.1", "7717f23").is_err());
+        assert!(EngineIdentity::new("eclipse.sumo", "", "7717f23").is_err());
+        assert!(EngineIdentity::new("eclipse.sumo", "1.27.1", "bad revision").is_err());
+    }
+
+    #[test]
     fn published_control_schema_is_valid_json() {
-        let schema = include_str!("../../../schemas/worker-protocol/control-v1.schema.json");
+        let schema = include_str!("../../../schemas/worker-protocol/control-v2.schema.json");
         let parsed: serde_json::Value = serde_json::from_str(schema).unwrap();
         assert_eq!(
             parsed["$id"],
-            "https://roadsim.dev/schemas/worker-protocol/control-v1.schema.json"
+            "https://roadsim.dev/schemas/worker-protocol/control-v2.schema.json"
         );
-        let data_schema = include_str!("../../../schemas/worker-protocol/data-v1.schema.json");
+        let data_schema = include_str!("../../../schemas/worker-protocol/data-v2.schema.json");
         let parsed: serde_json::Value = serde_json::from_str(data_schema).unwrap();
         assert_eq!(
             parsed["$id"],
-            "https://roadsim.dev/schemas/worker-protocol/data-v1.schema.json"
+            "https://roadsim.dev/schemas/worker-protocol/data-v2.schema.json"
         );
     }
 

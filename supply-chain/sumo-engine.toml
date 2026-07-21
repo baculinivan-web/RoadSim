@@ -1,0 +1,36 @@
+schema_version = 1
+engine_name = "eclipse.sumo"
+engine_version = "1.27.1"
+source_repository = "https://github.com/eclipse-sumo/sumo.git"
+source_tag = "v1_27_1"
+source_commit = "7717f2379d9e314a0c81c5cec748444de06a2a91"
+license_expression = "EPL-2.0"
+distribution_status = "review_pending_e10_t12"
+bundle_optional_gpl_extras = false
+
+[build]
+strategy = "source_from_exact_commit"
+cmake_build_type = "Release"
+build_libsumo = true
+build_gui = false
+build_optional_gpl_extras = false
+
+[[targets]]
+os = "windows"
+architecture = "x86_64"
+minimum = "Windows 11"
+
+[[targets]]
+os = "macos"
+architecture = "aarch64"
+minimum = "macOS 14"
+
+[[targets]]
+os = "macos"
+architecture = "x86_64"
+minimum = "macOS 14"
+
+[[targets]]
+os = "linux"
+architecture = "x86_64"
+minimum = "Ubuntu 24.04 LTS"

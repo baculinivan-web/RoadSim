@@ -3,8 +3,9 @@ use roadsim_worker_client::{
     WorkerClientConfig, WorkerClientErrorCode,
 };
 use roadsim_worker_protocol::{
-    AuthToken, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload, TerminalStatus,
-    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode, read_frame, write_frame,
+    AuthToken, EngineIdentity, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload,
+    TerminalStatus, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode, read_frame,
+    write_frame,
 };
 use std::{
     io::BufReader,
@@ -29,11 +30,37 @@ fn handshake_ping_session_cancel_and_shutdown_complete() {
         .handshake(vec!["worker.stub.lifecycle".to_owned()], TIMEOUT)
         .unwrap();
     assert_eq!(hello.worker_name, "roadsim-worker-stub");
+    assert_eq!(hello.worker_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(hello.engine.name(), "roadsim.stub");
+    assert_eq!(hello.engine.version(), "1");
+    assert_eq!(hello.engine.build_revision(), "builtin-v1");
     assert_eq!(hello.capabilities, ["worker.stub.lifecycle"]);
     client.ping(TIMEOUT).unwrap();
     client.open_session(42, TIMEOUT).unwrap();
     client.cancel_session(42, TIMEOUT).unwrap();
     client.shutdown(TIMEOUT).unwrap();
+}
+
+#[test]
+fn exact_engine_requirement_is_checked_before_session_open() {
+    let mut accepted = WorkerClient::spawn(config(token("a"))).unwrap();
+    let required = EngineIdentity::new("roadsim.stub", "1", "builtin-v1").unwrap();
+    let hello = accepted
+        .handshake_with_engine(Vec::new(), required.clone(), TIMEOUT)
+        .unwrap();
+    assert_eq!(hello.engine, required);
+    accepted.shutdown(TIMEOUT).unwrap();
+
+    let mut rejected = WorkerClient::spawn(config(token("b"))).unwrap();
+    let wrong = EngineIdentity::new("eclipse.sumo", "1.27.1", "7717f2379d9e").unwrap();
+    let error = rejected
+        .handshake_with_engine(Vec::new(), wrong, TIMEOUT)
+        .unwrap_err();
+    assert_eq!(error.code(), WorkerClientErrorCode::WorkerRejected);
+    assert_eq!(
+        error.worker_diagnostic(),
+        Some(WorkerDiagnosticCode::EngineIdentityMismatch)
+    );
 }
 
 #[test]
@@ -78,6 +105,7 @@ fn wrong_handshake_token_is_rejected_and_never_echoed() {
         RequestPayload::Handshake {
             auth_token: token("b"),
             required_capabilities: Vec::new(),
+            required_engine: None,
         },
     );
     write_frame(child.stdin.as_mut().unwrap(), &request).unwrap();

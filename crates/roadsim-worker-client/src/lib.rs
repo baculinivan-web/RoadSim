@@ -12,10 +12,11 @@ pub use workdir::{
 };
 
 use roadsim_worker_protocol::{
-    AuthToken, DataValidationErrorCode, FrameError, FrameErrorCode, MetricBatch, RequestEnvelope,
-    RequestPayload, ResponseEnvelope, ResponsePayload, TerminalEvent, VisualFrameBatch,
-    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataPayload, WorkerDiagnosticCode,
-    capabilities_are_valid, read_data_frame, read_frame, write_frame,
+    AuthToken, DataValidationErrorCode, EngineIdentity, FrameError, FrameErrorCode, MetricBatch,
+    RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload, TerminalEvent,
+    VisualFrameBatch, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataPayload,
+    WorkerDiagnosticCode, capabilities_are_valid, read_data_frame, read_frame,
+    worker_version_is_valid, write_frame,
 };
 use std::{
     collections::VecDeque,
@@ -87,6 +88,7 @@ pub enum WorkerClientErrorCode {
     WorkerExited,
     CorrelationMismatch,
     InvalidCapabilityManifest,
+    EngineIdentityMismatch,
     WorkerRejected,
     UnexpectedResponse,
 }
@@ -103,6 +105,7 @@ impl WorkerClientErrorCode {
             Self::WorkerExited => "worker.client.exited",
             Self::CorrelationMismatch => "worker.client.correlation_mismatch",
             Self::InvalidCapabilityManifest => "worker.client.capability_manifest_invalid",
+            Self::EngineIdentityMismatch => "worker.client.engine_identity_mismatch",
             Self::WorkerRejected => "worker.client.rejected",
             Self::UnexpectedResponse => "worker.client.response_unexpected",
         }
@@ -167,6 +170,8 @@ impl Error for WorkerClientError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkerHello {
     pub worker_name: String,
+    pub worker_version: String,
+    pub engine: EngineIdentity,
     pub capabilities: Vec<String>,
 }
 
@@ -373,34 +378,83 @@ impl WorkerClient {
         required_capabilities: Vec<String>,
         timeout: Duration,
     ) -> Result<WorkerHello, WorkerClientError> {
+        self.handshake_inner(required_capabilities, None, timeout)
+    }
+
+    pub fn handshake_with_engine(
+        &mut self,
+        required_capabilities: Vec<String>,
+        required_engine: EngineIdentity,
+        timeout: Duration,
+    ) -> Result<WorkerHello, WorkerClientError> {
+        self.handshake_inner(required_capabilities, Some(required_engine), timeout)
+    }
+
+    fn handshake_inner(
+        &mut self,
+        required_capabilities: Vec<String>,
+        required_engine: Option<EngineIdentity>,
+        timeout: Duration,
+    ) -> Result<WorkerHello, WorkerClientError> {
         if !capabilities_are_valid(&required_capabilities) {
             return Err(WorkerClientError::new(
                 WorkerClientErrorCode::InvalidCapabilityManifest,
             ));
         }
+        if required_engine
+            .as_ref()
+            .is_some_and(|identity| !identity.is_valid())
+        {
+            return Err(WorkerClientError::new(
+                WorkerClientErrorCode::EngineIdentityMismatch,
+            ));
+        }
+        let expected_capabilities = required_capabilities.clone();
+        let expected_engine = required_engine.clone();
         let response = self.request(
             None,
             RequestPayload::Handshake {
                 auth_token: self.auth_token.clone(),
                 required_capabilities,
+                required_engine,
             },
             timeout,
         )?;
-        match response {
-            ResponsePayload::HandshakeAccepted {
-                worker_name,
-                capabilities,
-            } if !worker_name.is_empty()
-                && worker_name.len() <= 128
-                && capabilities_are_valid(&capabilities) =>
-            {
-                Ok(WorkerHello {
-                    worker_name,
-                    capabilities,
-                })
-            }
-            _ => self.unexpected_response(),
+        let ResponsePayload::HandshakeAccepted {
+            worker_name,
+            worker_version,
+            engine,
+            capabilities,
+        } = response
+        else {
+            return self.unexpected_response();
+        };
+        if worker_name.is_empty()
+            || worker_name.len() > 128
+            || !worker_version_is_valid(&worker_version)
+            || !engine.is_valid()
+            || !capabilities_are_valid(&capabilities)
+            || !expected_capabilities
+                .iter()
+                .all(|required| capabilities.contains(required))
+        {
+            return self.unexpected_response();
         }
+        if expected_engine
+            .as_ref()
+            .is_some_and(|expected| expected != &engine)
+        {
+            self.stop_process();
+            return Err(WorkerClientError::new(
+                WorkerClientErrorCode::EngineIdentityMismatch,
+            ));
+        }
+        Ok(WorkerHello {
+            worker_name,
+            worker_version,
+            engine,
+            capabilities,
+        })
     }
 
     pub fn ping(&mut self, timeout: Duration) -> Result<(), WorkerClientError> {

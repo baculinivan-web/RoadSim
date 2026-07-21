@@ -44,8 +44,8 @@ endpoint до появления реального SUMO payload.
 - parent запускает точный executable с массивом аргументов и inherited pipes;
 - frame — `u32` little-endian byte length и UTF-8 JSON payload;
 - hard limit control frame — 1 MiB, проверяемый до payload allocation;
-- JSON shape опубликован как Draft 2020-12
-  `schemas/worker-protocol/control-v1.schema.json`;
+- JSON shape опубликован как Draft 2020-12. Исторический v1 сохранён, текущий
+  `schemas/worker-protocol/control-v2.schema.json` добавляет exact engine identity;
 - каждый envelope содержит `protocol_version`, `request_id`, optional
   `session_id` и монотонный `sequence`;
 - первый request передаёт 256-bit lowercase hex one-time token и required
@@ -53,12 +53,15 @@ endpoint до появления реального SUMO payload.
   `Debug`/`Display`;
 - неизвестная capability и version mismatch дают стабильный diagnostic до
   открытия session, без silent downgrade;
+- v2 handshake передаёт обязательные worker version и engine
+  name/version/build revision; optional exact requirement блокирует иной build
+  до открытия session;
 - одна mutable client instance разрешает один in-flight control request;
 - timeout завершает worker, crash/EOF не распространяется на editor process;
 - stdin/stdout зарезервированы протоколом, stderr не попадает в пользовательский
   UI автоматически.
 
-JSON v1 является wire format только control-plane. Он не сериализует Rust layout
+JSON является wire format только control-plane. Он не сериализует Rust layout
 и не переносит CSN, per-agent frames, metrics или result artifacts. Для этих
 данных E09-T08/ADR-Q09 должен выбрать bounded batch transport и две очереди с
 разной loss policy.
@@ -95,7 +98,7 @@ worker и не отражает token в response.
 ## Проверка решения
 
 - frame round-trip, empty/truncated/invalid/oversized input;
-- protocol version mismatch и неизвестная capability;
+- protocol version/engine identity mismatch и неизвестная capability;
 - неверный token и handshake-before-session;
 - open/cancel/shutdown lifecycle;
 - forced worker crash и hang timeout;

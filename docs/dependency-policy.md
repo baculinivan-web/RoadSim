@@ -185,3 +185,11 @@ E09-T10 не добавляет новые third-party packages. `roadsim-worker
 filesystem/process API остаются в этой boundary crate. Marker read проверяет
 metadata size до allocation, записи используют `create_new` + `sync_all`, а
 paths генерируются из numeric session ID без пользовательской строки.
+
+E10-T01 не добавляет Cargo dependency и ещё не bundle-ит native artifact.
+`supply-chain/sumo-engine.toml` закрепляет upstream SUMO `1.27.1` tag и полный
+source commit, headless libsumo build и четыре NFR-030 target. CI fail-closed
+отклоняет optional GPL extras, short/floating revision и изменение EPL-2.0
+metadata; это технический guard, а не замена distribution review E10-T12.
+Upstream evidence: [release](https://github.com/eclipse-sumo/sumo/releases/tag/v1_27_1),
+[license inventory](https://eclipse.dev/sumo/docs/Libraries_Licenses.html).
