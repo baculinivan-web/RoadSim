@@ -5,9 +5,15 @@
 //! transport separately after measurement.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
-use std::{error::Error, fmt, io::Read, io::Write};
+use std::{
+    error::Error,
+    fmt,
+    io::Read,
+    io::Write,
+    path::{Component, Path},
+};
 
-pub const WORKER_PROTOCOL_VERSION: u32 = 2;
+pub const WORKER_PROTOCOL_VERSION: u32 = 3;
 pub const MAX_CONTROL_FRAME_BYTES: usize = 1_048_576;
 pub const MAX_DATA_FRAME_BYTES: usize = 16_777_216;
 pub const MAX_CAPABILITIES: usize = 64;
@@ -15,6 +21,8 @@ pub const MAX_CAPABILITY_ID_BYTES: usize = 128;
 pub const MAX_ENGINE_NAME_BYTES: usize = 128;
 pub const MAX_ENGINE_VERSION_BYTES: usize = 64;
 pub const MAX_ENGINE_BUILD_REVISION_BYTES: usize = 128;
+pub const MAX_BUNDLE_PATH_BYTES: usize = 240;
+pub const MAX_STEPS_PER_REQUEST: u32 = 1_000_000;
 pub const MAX_VISUAL_AGENTS_PER_BATCH: usize = 100_000;
 pub const MAX_METRIC_SAMPLES_PER_BATCH: usize = 4_096;
 pub const MAX_METRIC_DEFINITION_ID_BYTES: usize = 128;
@@ -158,6 +166,70 @@ impl fmt::Display for EngineIdentityError {
 
 impl Error for EngineIdentityError {}
 
+/// Backend-neutral reference to a compiled bundle inside the worker run directory.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerSessionConfig {
+    bundle_path: String,
+    root_seed: u64,
+    step_length_ms: u32,
+}
+
+impl WorkerSessionConfig {
+    pub fn new(
+        bundle_path: impl Into<String>,
+        root_seed: u64,
+        step_length_ms: u32,
+    ) -> Result<Self, WorkerSessionConfigError> {
+        let config = Self {
+            bundle_path: bundle_path.into(),
+            root_seed,
+            step_length_ms,
+        };
+        if config.is_valid() {
+            Ok(config)
+        } else {
+            Err(WorkerSessionConfigError)
+        }
+    }
+
+    #[must_use]
+    pub fn bundle_path(&self) -> &str {
+        &self.bundle_path
+    }
+
+    #[must_use]
+    pub const fn root_seed(&self) -> u64 {
+        self.root_seed
+    }
+
+    #[must_use]
+    pub const fn step_length_ms(&self) -> u32 {
+        self.step_length_ms
+    }
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        !self.bundle_path.is_empty()
+            && self.bundle_path.len() <= MAX_BUNDLE_PATH_BYTES
+            && (1..=1_000).contains(&self.step_length_ms)
+            && Path::new(&self.bundle_path)
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkerSessionConfigError;
+
+impl fmt::Display for WorkerSessionConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("worker session config is invalid")
+    }
+}
+
+impl Error for WorkerSessionConfigError {}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum WorkerDiagnosticCode {
     #[serde(rename = "worker.protocol.version_mismatch")]
@@ -172,6 +244,18 @@ pub enum WorkerDiagnosticCode {
     InvalidCapabilityManifest,
     #[serde(rename = "worker.engine.identity_mismatch")]
     EngineIdentityMismatch,
+    #[serde(rename = "worker.engine.unavailable")]
+    EngineUnavailable,
+    #[serde(rename = "worker.engine.start_failed")]
+    EngineStartFailed,
+    #[serde(rename = "worker.engine.step_failed")]
+    EngineStepFailed,
+    #[serde(rename = "worker.engine.close_failed")]
+    EngineCloseFailed,
+    #[serde(rename = "worker.session.config_invalid")]
+    SessionConfigInvalid,
+    #[serde(rename = "worker.session.step_invalid")]
+    SessionStepInvalid,
     #[serde(rename = "worker.protocol.sequence_out_of_order")]
     SequenceOutOfOrder,
     #[serde(rename = "worker.session.already_active")]
@@ -192,6 +276,12 @@ impl WorkerDiagnosticCode {
             Self::UnsupportedCapability => "worker.capability.unsupported",
             Self::InvalidCapabilityManifest => "worker.capability.manifest_invalid",
             Self::EngineIdentityMismatch => "worker.engine.identity_mismatch",
+            Self::EngineUnavailable => "worker.engine.unavailable",
+            Self::EngineStartFailed => "worker.engine.start_failed",
+            Self::EngineStepFailed => "worker.engine.step_failed",
+            Self::EngineCloseFailed => "worker.engine.close_failed",
+            Self::SessionConfigInvalid => "worker.session.config_invalid",
+            Self::SessionStepInvalid => "worker.session.step_invalid",
             Self::SequenceOutOfOrder => "worker.protocol.sequence_out_of_order",
             Self::SessionAlreadyActive => "worker.session.already_active",
             Self::SessionNotFound => "worker.session.not_found",
@@ -243,7 +333,13 @@ pub enum RequestPayload {
         required_engine: Option<EngineIdentity>,
     },
     Ping,
-    OpenSession,
+    OpenSession {
+        config: WorkerSessionConfig,
+    },
+    StepSession {
+        steps: u32,
+    },
+    CloseSession,
     CancelSession,
     Shutdown,
 }
@@ -287,6 +383,10 @@ pub enum ResponsePayload {
     },
     Pong,
     SessionOpened,
+    SessionStepped {
+        tick: u64,
+    },
+    SessionClosed,
     SessionCancelled,
     ShutdownAcknowledged,
     Error {
@@ -883,18 +983,30 @@ mod tests {
     }
 
     #[test]
+    fn session_config_accepts_only_relative_bounded_bundle_paths() {
+        let config = WorkerSessionConfig::new("bundle/run.sumocfg", 123, 100).unwrap();
+        assert_eq!(config.bundle_path(), "bundle/run.sumocfg");
+        assert_eq!(config.root_seed(), 123);
+        assert_eq!(config.step_length_ms(), 100);
+        assert!(WorkerSessionConfig::new("../outside.sumocfg", 1, 100).is_err());
+        assert!(WorkerSessionConfig::new("/outside.sumocfg", 1, 100).is_err());
+        assert!(WorkerSessionConfig::new("bundle/run.sumocfg", 1, 0).is_err());
+        assert!(WorkerSessionConfig::new("bundle/run.sumocfg", 1, 1_001).is_err());
+    }
+
+    #[test]
     fn published_control_schema_is_valid_json() {
-        let schema = include_str!("../../../schemas/worker-protocol/control-v2.schema.json");
+        let schema = include_str!("../../../schemas/worker-protocol/control-v3.schema.json");
         let parsed: serde_json::Value = serde_json::from_str(schema).unwrap();
         assert_eq!(
             parsed["$id"],
-            "https://roadsim.dev/schemas/worker-protocol/control-v2.schema.json"
+            "https://roadsim.dev/schemas/worker-protocol/control-v3.schema.json"
         );
-        let data_schema = include_str!("../../../schemas/worker-protocol/data-v2.schema.json");
+        let data_schema = include_str!("../../../schemas/worker-protocol/data-v3.schema.json");
         let parsed: serde_json::Value = serde_json::from_str(data_schema).unwrap();
         assert_eq!(
             parsed["$id"],
-            "https://roadsim.dev/schemas/worker-protocol/data-v2.schema.json"
+            "https://roadsim.dev/schemas/worker-protocol/data-v3.schema.json"
         );
     }
 

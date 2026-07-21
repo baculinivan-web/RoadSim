@@ -193,3 +193,12 @@ source commit, headless libsumo build и четыре NFR-030 target. CI fail-cl
 metadata; это технический guard, а не замена distribution review E10-T12.
 Upstream evidence: [release](https://github.com/eclipse-sumo/sumo/releases/tag/v1_27_1),
 [license inventory](https://eclipse.dev/sumo/docs/Libraries_Licenses.html).
+
+E10-T02 делает уже присутствовавший в locked GPU graph `libloading 0.8.9`
+прямой dependency только `sumo-worker`. Crate имеет MSRV 1.71 и лицензию ISC;
+новой версии/transitive package в lockfile не появляется. Он нужен для загрузки
+отдельно собранного exact native bridge без линковки libsumo в editor/CLI.
+Unsafe изолирован одним `native` module: ABI version проверяется до вызовов,
+library handle переживает function pointers, все C buffers bounded. Ни domain,
+CSN, generic worker client, UI, ни renderer не получают native dependency.
+Источник review: [libloading 0.8.9](https://docs.rs/crate/libloading/0.8.9).

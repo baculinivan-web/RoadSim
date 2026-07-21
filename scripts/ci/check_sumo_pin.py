@@ -13,6 +13,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = ROOT / "supply-chain" / "sumo-engine.toml"
+NATIVE_CMAKE = ROOT / "workers" / "roadsim-sumo-worker" / "native" / "CMakeLists.txt"
+RUST_PIN = ROOT / "workers" / "roadsim-sumo-worker" / "src" / "pin.rs"
 EXPECTED_TARGETS = {
     ("windows", "x86_64", "Windows 11"),
     ("macos", "aarch64", "macOS 14"),
@@ -105,6 +107,23 @@ def validate(document: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_native_bridge(
+    document: dict[str, Any], cmake_text: str, rust_pin_text: str
+) -> list[str]:
+    errors: list[str] = []
+    version = document.get("engine_version")
+    revision = document.get("source_commit")
+    if not isinstance(version, str) or f'"{version}" CACHE STRING' not in cmake_text:
+        errors.append("native bridge version differs from engine pin")
+    if not isinstance(revision, str) or f'"{revision}"' not in cmake_text:
+        errors.append("native bridge revision differs from engine pin")
+    if not isinstance(version, str) or f'ENGINE_VERSION: &str = "{version}"' not in rust_pin_text:
+        errors.append("Rust worker version differs from engine pin")
+    if not isinstance(revision, str) or f'SOURCE_REVISION: &str = "{revision}"' not in rust_pin_text:
+        errors.append("Rust worker revision differs from engine pin")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -115,7 +134,13 @@ def main() -> int:
     except (OSError, tomllib.TOMLDecodeError) as error:
         print(f"SUMO-PIN-INVALID: cannot read manifest: {error}", file=sys.stderr)
         return 1
-    errors = validate(document)
+    try:
+        cmake_text = NATIVE_CMAKE.read_text(encoding="utf-8")
+        rust_pin_text = RUST_PIN.read_text(encoding="utf-8")
+    except OSError as error:
+        print(f"SUMO-PIN-INVALID: cannot read native bridge config: {error}", file=sys.stderr)
+        return 1
+    errors = validate(document) + validate_native_bridge(document, cmake_text, rust_pin_text)
     if errors:
         for error in errors:
             print(f"SUMO-PIN-INVALID: {error}", file=sys.stderr)

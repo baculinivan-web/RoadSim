@@ -477,6 +477,14 @@ guard. Worker protocol v2 сообщает exact engine name/version/build revis
 Реальное чтение версии из libsumo и clean-machine artifacts остаются соответственно
 в E10-T02 и E10-T11, поэтому SUMO acceptance ещё не объявляется зелёным.
 
+Статус E10-T02: 🟡 добавлен отдельный `sumo-worker`, versioned native C ABI и
+явный protocol v3 lifecycle `OpenSession → StepSession → CloseSession`.
+Cross-process ABI fixture доказывает ordered 3+2 steps, close и изоляцию native
+abort; missing/mismatched engine блокируется до session. Production C++ bridge
+вызывает libsumo `getVersion/start/step/close`, но exact headless `1.27.1`
+artifact пока не собран и реальный `.sumocfg` smoke отсутствует — fixture не
+объявляется заменой этого acceptance.
+
 Для задач T03–T07 обязательны `unsupported_feature` fixtures. Экспорт не должен удалять неподдерживаемые сущности.
 
 ## 19. Epic E11 — Simulation UX и динамический renderer

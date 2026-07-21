@@ -12,11 +12,11 @@ pub use workdir::{
 };
 
 use roadsim_worker_protocol::{
-    AuthToken, DataValidationErrorCode, EngineIdentity, FrameError, FrameErrorCode, MetricBatch,
-    RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload, TerminalEvent,
-    VisualFrameBatch, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataPayload,
-    WorkerDiagnosticCode, capabilities_are_valid, read_data_frame, read_frame,
-    worker_version_is_valid, write_frame,
+    AuthToken, DataValidationErrorCode, EngineIdentity, FrameError, FrameErrorCode,
+    MAX_STEPS_PER_REQUEST, MetricBatch, RequestEnvelope, RequestPayload, ResponseEnvelope,
+    ResponsePayload, TerminalEvent, VisualFrameBatch, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV,
+    WorkerDataPayload, WorkerDiagnosticCode, WorkerSessionConfig, capabilities_are_valid,
+    read_data_frame, read_frame, worker_version_is_valid, write_frame,
 };
 use std::{
     collections::VecDeque,
@@ -89,6 +89,8 @@ pub enum WorkerClientErrorCode {
     CorrelationMismatch,
     InvalidCapabilityManifest,
     EngineIdentityMismatch,
+    InvalidSessionConfig,
+    InvalidStepCount,
     WorkerRejected,
     UnexpectedResponse,
 }
@@ -106,6 +108,8 @@ impl WorkerClientErrorCode {
             Self::CorrelationMismatch => "worker.client.correlation_mismatch",
             Self::InvalidCapabilityManifest => "worker.client.capability_manifest_invalid",
             Self::EngineIdentityMismatch => "worker.client.engine_identity_mismatch",
+            Self::InvalidSessionConfig => "worker.client.session_config_invalid",
+            Self::InvalidStepCount => "worker.client.step_count_invalid",
             Self::WorkerRejected => "worker.client.rejected",
             Self::UnexpectedResponse => "worker.client.response_unexpected",
         }
@@ -467,10 +471,52 @@ impl WorkerClient {
     pub fn open_session(
         &mut self,
         session_id: u64,
+        config: WorkerSessionConfig,
         timeout: Duration,
     ) -> Result<(), WorkerClientError> {
-        match self.request(Some(session_id), RequestPayload::OpenSession, timeout)? {
+        if !config.is_valid() {
+            return Err(WorkerClientError::new(
+                WorkerClientErrorCode::InvalidSessionConfig,
+            ));
+        }
+        match self.request(
+            Some(session_id),
+            RequestPayload::OpenSession { config },
+            timeout,
+        )? {
             ResponsePayload::SessionOpened => Ok(()),
+            _ => self.unexpected_response(),
+        }
+    }
+
+    pub fn step_session(
+        &mut self,
+        session_id: u64,
+        steps: u32,
+        timeout: Duration,
+    ) -> Result<u64, WorkerClientError> {
+        if steps == 0 || steps > MAX_STEPS_PER_REQUEST {
+            return Err(WorkerClientError::new(
+                WorkerClientErrorCode::InvalidStepCount,
+            ));
+        }
+        match self.request(
+            Some(session_id),
+            RequestPayload::StepSession { steps },
+            timeout,
+        )? {
+            ResponsePayload::SessionStepped { tick } => Ok(tick),
+            _ => self.unexpected_response(),
+        }
+    }
+
+    pub fn close_session(
+        &mut self,
+        session_id: u64,
+        timeout: Duration,
+    ) -> Result<(), WorkerClientError> {
+        match self.request(Some(session_id), RequestPayload::CloseSession, timeout)? {
+            ResponsePayload::SessionClosed => Ok(()),
             _ => self.unexpected_response(),
         }
     }

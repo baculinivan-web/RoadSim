@@ -81,6 +81,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Закреплён SUMO `1.27.1` source tag/commit, headless four-target build matrix и
   pending distribution status; CI отклоняет floating/short pin, optional GPL
   extras и неполную NFR-030 matrix.
+- Добавлен отдельный `sumo-worker` и versioned native C ABI для exact libsumo
+  identity и lifecycle start/step/close. ABI fixture проверяет process isolation;
+  реальный headless SUMO smoke ещё не заявлен.
 
 ### Changed
 
@@ -88,6 +91,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   публикует bounded exact engine name/version/build revision и может потребовать
   точное совпадение до открытия session. V1 schemas сохранены для истории;
   runtime migration/downgrade отсутствует, несовпадение версии отклоняется.
+- Worker protocol повышен до v3 с backend-neutral relative bundle config и
+  отдельными `OpenSession`, `StepSession`, `CloseSession`; `Ping` остаётся только
+  health check. V1/v2 schemas неизменяемо сохранены, downgrade отсутствует.
 
 ### Fixed
 

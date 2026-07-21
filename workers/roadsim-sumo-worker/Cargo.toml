@@ -1,0 +1,21 @@
+[package]
+name = "sumo-worker"
+description = "Isolated RoadSim worker owning one native libsumo lifecycle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+libloading.workspace = true
+roadsim-worker-protocol = { version = "0.1.0", path = "../../crates/roadsim-worker-protocol" }
+
+[dev-dependencies]
+roadsim-worker-client = { version = "0.1.0", path = "../../crates/roadsim-worker-client" }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"

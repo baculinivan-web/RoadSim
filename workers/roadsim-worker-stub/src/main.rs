@@ -1,8 +1,9 @@
 use roadsim_worker_protocol::{
-    AuthToken, EngineIdentity, MetricBatch, MetricSample, RequestEnvelope, RequestPayload,
-    ResponseEnvelope, ResponsePayload, TerminalEvent, TerminalStatus, VisualFrameBatch,
-    WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataEnvelope, WorkerDataPayload,
-    WorkerDiagnosticCode, capabilities_are_valid, read_frame, write_data_frame, write_frame,
+    AuthToken, EngineIdentity, MAX_STEPS_PER_REQUEST, MetricBatch, MetricSample, RequestEnvelope,
+    RequestPayload, ResponseEnvelope, ResponsePayload, TerminalEvent, TerminalStatus,
+    VisualFrameBatch, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataEnvelope,
+    WorkerDataPayload, WorkerDiagnosticCode, capabilities_are_valid, read_frame, write_data_frame,
+    write_frame,
 };
 use std::{env, io, process::ExitCode, sync::mpsc, thread};
 
@@ -58,6 +59,7 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
     let mut handshake_complete = false;
     let mut last_sequence = None;
     let mut active_session = None;
+    let mut active_tick = 0_u64;
     let mut data_sequence = 1_u64;
 
     loop {
@@ -98,9 +100,10 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
         last_sequence = Some(request.sequence);
 
         let session_shape_is_valid = match &request.payload {
-            RequestPayload::OpenSession | RequestPayload::CancelSession => {
-                request.session_id.is_some()
-            }
+            RequestPayload::OpenSession { .. }
+            | RequestPayload::StepSession { .. }
+            | RequestPayload::CloseSession
+            | RequestPayload::CancelSession => request.session_id.is_some(),
             RequestPayload::Handshake { .. } | RequestPayload::Ping | RequestPayload::Shutdown => {
                 request.session_id.is_none()
             }
@@ -277,7 +280,7 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                 }
                 Mode::RequireWorkdir => ResponsePayload::Pong,
             },
-            RequestPayload::OpenSession => {
+            RequestPayload::OpenSession { ref config } => {
                 let Some(session_id) = request.session_id else {
                     if respond_error(
                         &mut writer,
@@ -304,8 +307,82 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                     }
                     continue;
                 }
+                if !config.is_valid() {
+                    if respond_error(
+                        &mut writer,
+                        &request,
+                        WorkerDiagnosticCode::SessionConfigInvalid,
+                        Vec::new(),
+                    )
+                    .is_err()
+                    {
+                        return ExitCode::from(74);
+                    }
+                    continue;
+                }
                 active_session = Some(session_id);
+                active_tick = 0;
                 ResponsePayload::SessionOpened
+            }
+            RequestPayload::StepSession { steps } => {
+                if active_session != request.session_id || active_session.is_none() {
+                    if respond_error(
+                        &mut writer,
+                        &request,
+                        WorkerDiagnosticCode::SessionNotFound,
+                        Vec::new(),
+                    )
+                    .is_err()
+                    {
+                        return ExitCode::from(74);
+                    }
+                    continue;
+                }
+                let Some(next_tick) = active_tick.checked_add(u64::from(steps)) else {
+                    if respond_error(
+                        &mut writer,
+                        &request,
+                        WorkerDiagnosticCode::SessionStepInvalid,
+                        Vec::new(),
+                    )
+                    .is_err()
+                    {
+                        return ExitCode::from(74);
+                    }
+                    continue;
+                };
+                if steps == 0 || steps > MAX_STEPS_PER_REQUEST {
+                    if respond_error(
+                        &mut writer,
+                        &request,
+                        WorkerDiagnosticCode::SessionStepInvalid,
+                        Vec::new(),
+                    )
+                    .is_err()
+                    {
+                        return ExitCode::from(74);
+                    }
+                    continue;
+                }
+                active_tick = next_tick;
+                ResponsePayload::SessionStepped { tick: active_tick }
+            }
+            RequestPayload::CloseSession => {
+                if active_session != request.session_id || active_session.is_none() {
+                    if respond_error(
+                        &mut writer,
+                        &request,
+                        WorkerDiagnosticCode::SessionNotFound,
+                        Vec::new(),
+                    )
+                    .is_err()
+                    {
+                        return ExitCode::from(74);
+                    }
+                    continue;
+                }
+                active_session = None;
+                ResponsePayload::SessionClosed
             }
             RequestPayload::CancelSession => {
                 if active_session != request.session_id || active_session.is_none() {

@@ -8,7 +8,13 @@ from pathlib import Path
 import tomllib
 import unittest
 
-from check_sumo_pin import DEFAULT_MANIFEST, validate
+from check_sumo_pin import (
+    NATIVE_CMAKE,
+    RUST_PIN,
+    DEFAULT_MANIFEST,
+    validate,
+    validate_native_bridge,
+)
 
 
 def baseline() -> dict[str, object]:
@@ -43,6 +49,17 @@ class SumoPinGuardTests(unittest.TestCase):
         assert isinstance(targets, list)
         targets.pop()
         self.assertIn("target matrix does not match NFR-030", validate(document))
+
+    def test_native_bridge_pin_matches_manifest(self) -> None:
+        cmake_text = NATIVE_CMAKE.read_text(encoding="utf-8")
+        rust_pin_text = RUST_PIN.read_text(encoding="utf-8")
+        self.assertEqual(validate_native_bridge(baseline(), cmake_text, rust_pin_text), [])
+        self.assertIn(
+            "native bridge revision differs from engine pin",
+            validate_native_bridge(
+                baseline(), cmake_text.replace("7717f237", "00000000"), rust_pin_text
+            ),
+        )
 
 
 if __name__ == "__main__":

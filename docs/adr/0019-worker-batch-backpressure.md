@@ -45,7 +45,8 @@ platform/dependency footprint без benchmark реального collector.
 - inherited stderr полностью резервируется для data frames и не используется
   как human log stream;
 - data frame имеет отдельный limit 16 MiB; исторический v1 сохранён, текущий
-  `schemas/worker-protocol/data-v2.schema.json` синхронизирован с control
+  v2 добавил engine identity, а текущий
+  `schemas/worker-protocol/data-v3.schema.json` синхронизирован с control
   handshake version;
 - envelope содержит protocol/session/sequence, payload — visual frame, metric
   batch либо terminal event;

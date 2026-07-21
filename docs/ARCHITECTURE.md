@@ -41,6 +41,9 @@
 | ADR-015 | Основной код — Apache-2.0 OR MIT; лицензионный review дистрибуции обязателен | предварительно |
 | ADR-016 | Reference line — chained line/arc/linear-curvature authoring contract | принято |
 | ADR-017 | Project JSON — RFC 8785 canonicalization, SHA-256 и namespaced extensions | proposed |
+| ADR-018 | Worker control — bounded JSON frames по inherited pipes | proposed |
+| ADR-019 | Worker data — отдельный bounded batch pipe и loss policy | proposed |
+| ADR-020 | libsumo — versioned native C ABI только внутри SUMO worker | proposed |
 
 Новые решения оформляются отдельными ADR в `docs/adr/NNNN-title.md`: context, options, decision, consequences, migration.
 

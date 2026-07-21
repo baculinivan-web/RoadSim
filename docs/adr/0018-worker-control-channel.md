@@ -45,7 +45,8 @@ endpoint до появления реального SUMO payload.
 - frame — `u32` little-endian byte length и UTF-8 JSON payload;
 - hard limit control frame — 1 MiB, проверяемый до payload allocation;
 - JSON shape опубликован как Draft 2020-12. Исторический v1 сохранён, текущий
-  `schemas/worker-protocol/control-v2.schema.json` добавляет exact engine identity;
+  v2 добавил exact engine identity, а текущий
+  `schemas/worker-protocol/control-v3.schema.json` — явный session lifecycle;
 - каждый envelope содержит `protocol_version`, `request_id`, optional
   `session_id` и монотонный `sequence`;
 - первый request передаёт 256-bit lowercase hex one-time token и required

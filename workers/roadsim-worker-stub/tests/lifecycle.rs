@@ -4,8 +4,8 @@ use roadsim_worker_client::{
 };
 use roadsim_worker_protocol::{
     AuthToken, EngineIdentity, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload,
-    TerminalStatus, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode, read_frame,
-    write_frame,
+    TerminalStatus, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode,
+    WorkerSessionConfig, read_frame, write_frame,
 };
 use std::{
     io::BufReader,
@@ -23,6 +23,10 @@ fn config(auth_token: AuthToken) -> WorkerClientConfig {
     WorkerClientConfig::new(env!("CARGO_BIN_EXE_roadsim-worker-stub"), auth_token)
 }
 
+fn session_config() -> WorkerSessionConfig {
+    WorkerSessionConfig::new("bundle/run.sumocfg", 42, 100).unwrap()
+}
+
 #[test]
 fn handshake_ping_session_cancel_and_shutdown_complete() {
     let mut client = WorkerClient::spawn(config(token("a"))).unwrap();
@@ -36,8 +40,22 @@ fn handshake_ping_session_cancel_and_shutdown_complete() {
     assert_eq!(hello.engine.build_revision(), "builtin-v1");
     assert_eq!(hello.capabilities, ["worker.stub.lifecycle"]);
     client.ping(TIMEOUT).unwrap();
-    client.open_session(42, TIMEOUT).unwrap();
-    client.cancel_session(42, TIMEOUT).unwrap();
+    client.open_session(42, session_config(), TIMEOUT).unwrap();
+    assert_eq!(client.step_session(42, 3, TIMEOUT).unwrap(), 3);
+    assert_eq!(client.step_session(42, 2, TIMEOUT).unwrap(), 5);
+    client.close_session(42, TIMEOUT).unwrap();
+    client.shutdown(TIMEOUT).unwrap();
+}
+
+#[test]
+fn invalid_step_count_is_rejected_without_changing_session_tick() {
+    let mut client = WorkerClient::spawn(config(token("d"))).unwrap();
+    client.handshake(Vec::new(), TIMEOUT).unwrap();
+    client.open_session(8, session_config(), TIMEOUT).unwrap();
+    let error = client.step_session(8, 0, TIMEOUT).unwrap_err();
+    assert_eq!(error.code(), WorkerClientErrorCode::InvalidStepCount);
+    assert_eq!(client.step_session(8, 1, TIMEOUT).unwrap(), 1);
+    client.close_session(8, TIMEOUT).unwrap();
     client.shutdown(TIMEOUT).unwrap();
 }
 
@@ -137,7 +155,9 @@ fn session_request_before_handshake_is_rejected() {
         1,
         Some(42),
         1,
-        RequestPayload::OpenSession,
+        RequestPayload::OpenSession {
+            config: session_config(),
+        },
     );
     write_frame(child.stdin.as_mut().unwrap(), &request).unwrap();
     let response: ResponseEnvelope =
@@ -191,7 +211,7 @@ fn visual_frames_drop_to_latest_while_metrics_and_terminal_remain_reliable() {
             .capabilities
             .contains(&"worker.stub.batches".to_owned())
     );
-    client.open_session(42, TIMEOUT).unwrap();
+    client.open_session(42, session_config(), TIMEOUT).unwrap();
     client.ping(TIMEOUT).unwrap();
     client.cancel_session(42, TIMEOUT).unwrap();
 
@@ -229,7 +249,7 @@ fn graceful_shutdown_preserves_reliable_batches_already_in_the_pipe() {
     client
         .handshake(vec!["worker.stub.batches".to_owned()], TIMEOUT)
         .unwrap();
-    client.open_session(77, TIMEOUT).unwrap();
+    client.open_session(77, session_config(), TIMEOUT).unwrap();
     client.ping(TIMEOUT).unwrap();
     client.shutdown(TIMEOUT).unwrap();
 

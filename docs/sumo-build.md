@@ -40,19 +40,33 @@ package smoke: такое evidence требуется в E10-T11.
 
 ## Runtime identity contract
 
-Worker protocol v2 добавляет обязательную `EngineIdentity` с machine-safe
+Worker protocol v3 сохраняет обязательную `EngineIdentity` с machine-safe
 `name`, exact `version` и `build_revision`. Client может передать exact required
 identity при handshake; несовпадение блокирует session стабильной diagnostic
 `worker.engine.identity_mismatch`. Accepted response повторно сверяется client,
 поэтому worker не может молча принять другой engine build.
 
-E10-T02 обязан получить runtime version через libsumo API, сопоставить её с
-`eclipse.sumo/1.27.1`, встроить exact source commit как build revision и только
-затем принять `OpenSession`. Version/build identity затем записывается в run
-manifest E13-T02.
+`sumo-worker` загружает versioned native bridge только внутри отдельного process.
+C++ bridge получает runtime version через libsumo API, сопоставляет её с
+`eclipse.sumo/1.27.1`, публикует exact source commit как build revision и только
+затем разрешает handshake. Version/build identity затем записывается в run
+manifest E13-T02. Явные protocol commands `OpenSession`, `StepSession` и
+`CloseSession` не смешиваются с health `Ping`.
 
-Protocol v1 schemas сохранены как исторический wire contract, но runtime не
-выполняет downgrade: текущая версия 2 обязательна для обеих control/data pipes.
+Protocol v1/v2 schemas сохранены как исторические wire contracts, но runtime не
+выполняет downgrade: текущая версия 3 обязательна для обеих control/data pipes.
+
+Native build выполняется отдельно от Cargo:
+
+```text
+cmake -S workers/roadsim-sumo-worker/native -B <build-dir> \
+  -DROADSIM_SUMO_HOME=<exact-source-build-root>
+cmake --build <build-dir> --config Release
+```
+
+ABI fixture в workspace проверяет loader/lifecycle/crash isolation, но не
+считается SUMO smoke. E10-T02 остаётся частичным, пока production bridge не
+собран против exact headless artifact и не запущен на минимальном `.sumocfg`.
 
 ## License boundary
 

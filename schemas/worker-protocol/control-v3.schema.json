@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roadsim.dev/schemas/worker-protocol/control-v3.schema.json",
+  "title": "RoadSim worker control protocol v3",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ],
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9._-]+$"
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "machine_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9._-]+$"
+    },
+    "version_component": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._+-]+$"
+    },
+    "engine_identity": {
+      "type": "object",
+      "required": ["name", "version", "build_revision"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/machine_identifier" },
+        "version": { "$ref": "#/$defs/version_component" },
+        "build_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._+-]+$"
+        }
+      }
+    },
+    "session_config": {
+      "type": "object",
+      "required": ["bundle_path", "root_seed", "step_length_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "bundle_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "root_seed": { "type": "integer", "minimum": 0 },
+        "step_length_ms": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      }
+    },
+    "correlation": {
+      "type": "object",
+      "required": ["protocol_version", "request_id", "session_id", "sequence"],
+      "properties": {
+        "protocol_version": { "const": 3 },
+        "request_id": { "type": "integer", "minimum": 0 },
+        "session_id": { "type": ["integer", "null"], "minimum": 0 },
+        "sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "request": {
+      "allOf": [
+        { "$ref": "#/$defs/correlation" },
+        {
+          "type": "object",
+          "required": ["payload"],
+          "properties": {
+            "payload": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "data"],
+                  "properties": {
+                    "type": { "const": "handshake" },
+                    "data": {
+                      "type": "object",
+                      "required": ["auth_token", "required_capabilities", "required_engine"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "auth_token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                        "required_capabilities": { "$ref": "#/$defs/capabilities" },
+                        "required_engine": {
+                          "oneOf": [
+                            { "type": "null" },
+                            { "$ref": "#/$defs/engine_identity" }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                { "$ref": "#/$defs/ping" },
+                { "$ref": "#/$defs/open_session" },
+                { "$ref": "#/$defs/step_session" },
+                { "$ref": "#/$defs/close_session" },
+                { "$ref": "#/$defs/cancel_session" },
+                { "$ref": "#/$defs/shutdown" }
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ping": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "ping" } },
+      "additionalProperties": false
+    },
+    "open_session": {
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "open_session" },
+        "data": {
+          "type": "object",
+          "required": ["config"],
+          "additionalProperties": false,
+          "properties": { "config": { "$ref": "#/$defs/session_config" } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "step_session": {
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "step_session" },
+        "data": {
+          "type": "object",
+          "required": ["steps"],
+          "additionalProperties": false,
+          "properties": { "steps": { "type": "integer", "minimum": 1, "maximum": 1000000 } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "close_session": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "close_session" } },
+      "additionalProperties": false
+    },
+    "cancel_session": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "cancel_session" } },
+      "additionalProperties": false
+    },
+    "shutdown": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "shutdown" } },
+      "additionalProperties": false
+    },
+    "response": {
+      "allOf": [
+        { "$ref": "#/$defs/correlation" },
+        {
+          "type": "object",
+          "required": ["payload"],
+          "properties": {
+            "payload": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "data"],
+                  "properties": {
+                    "type": { "const": "handshake_accepted" },
+                    "data": {
+                      "type": "object",
+                      "required": ["worker_name", "worker_version", "engine", "capabilities"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "worker_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+                        "worker_version": { "$ref": "#/$defs/version_component" },
+                        "engine": { "$ref": "#/$defs/engine_identity" },
+                        "capabilities": { "$ref": "#/$defs/capabilities" }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                { "$ref": "#/$defs/pong" },
+                { "$ref": "#/$defs/session_opened" },
+                { "$ref": "#/$defs/session_stepped" },
+                { "$ref": "#/$defs/session_closed" },
+                { "$ref": "#/$defs/session_cancelled" },
+                { "$ref": "#/$defs/shutdown_acknowledged" },
+                {
+                  "type": "object",
+                  "required": ["type", "data"],
+                  "properties": {
+                    "type": { "const": "error" },
+                    "data": {
+                      "type": "object",
+                      "required": ["code", "unsupported_capabilities"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "enum": [
+                            "worker.protocol.version_mismatch",
+                            "worker.protocol.authentication_failed",
+                            "worker.protocol.handshake_required",
+                            "worker.capability.unsupported",
+                            "worker.capability.manifest_invalid",
+                            "worker.engine.identity_mismatch",
+                            "worker.engine.unavailable",
+                            "worker.engine.start_failed",
+                            "worker.engine.step_failed",
+                            "worker.engine.close_failed",
+                            "worker.session.config_invalid",
+                            "worker.session.step_invalid",
+                            "worker.protocol.sequence_out_of_order",
+                            "worker.session.already_active",
+                            "worker.session.not_found",
+                            "worker.protocol.request_invalid"
+                          ]
+                        },
+                        "unsupported_capabilities": { "$ref": "#/$defs/capabilities" }
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "pong": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "pong" } },
+      "additionalProperties": false
+    },
+    "session_opened": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "session_opened" } },
+      "additionalProperties": false
+    },
+    "session_stepped": {
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "session_stepped" },
+        "data": {
+          "type": "object",
+          "required": ["tick"],
+          "additionalProperties": false,
+          "properties": { "tick": { "type": "integer", "minimum": 0 } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_closed": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "session_closed" } },
+      "additionalProperties": false
+    },
+    "session_cancelled": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "session_cancelled" } },
+      "additionalProperties": false
+    },
+    "shutdown_acknowledged": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "shutdown_acknowledged" } },
+      "additionalProperties": false
+    }
+  }
+}
