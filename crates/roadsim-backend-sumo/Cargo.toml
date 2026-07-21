@@ -1,0 +1,15 @@
+[package]
+name = "roadsim-backend-sumo"
+description = "SUMO adapter for RoadSim compiled simulation networks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+roadsim-compiled-network = { version = "0.1.0", path = "../roadsim-compiled-network" }
+roadsim-types = { version = "0.1.0", path = "../roadsim-types" }
+
+[lints]
+workspace = true

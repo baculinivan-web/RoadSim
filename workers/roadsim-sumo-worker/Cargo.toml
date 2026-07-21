@@ -12,6 +12,9 @@ libloading.workspace = true
 roadsim-worker-protocol = { version = "0.1.0", path = "../../crates/roadsim-worker-protocol" }
 
 [dev-dependencies]
+roadsim-backend-sumo = { version = "0.1.0", path = "../../crates/roadsim-backend-sumo" }
+roadsim-compiled-network = { version = "0.1.0", path = "../../crates/roadsim-compiled-network" }
+roadsim-types = { version = "0.1.0", path = "../../crates/roadsim-types" }
 roadsim-worker-client = { version = "0.1.0", path = "../../crates/roadsim-worker-client" }
 
 [lints.rust]

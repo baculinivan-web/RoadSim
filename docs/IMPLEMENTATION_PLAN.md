@@ -485,6 +485,14 @@ abort; missing/mismatched engine блокируется до session. Production
 tick и завершает recoverable run как `Completed`. Platform packaging и
 clean-machine matrix не приписываются T02 и остаются E10-T11.
 
+Статус E10-T03: 🟢 `roadsim-backend-sumo` детерминированно переводит straight
+CSN lanes в typed SUMO plain-network bundle без filesystem/libsumo dependency.
+Bundle сохраняет `CompiledLaneId → LaneOrigin → SUMO edge/lane` mapping, требует
+явную скорость и блокирует неподдерживаемые lane uses с Design object evidence.
+Exact `netconvert 1.27.1` принимает export, после чего opt-in worker smoke
+выполняет пять tick на сгенерированной CSN-дороге. Junction topology, demand и
+routes намеренно остаются E10-T04/E10-T06.
+
 Для задач T03–T07 обязательны `unsupported_feature` fixtures. Экспорт не должен удалять неподдерживаемые сущности.
 
 ## 19. Epic E11 — Simulation UX и динамический renderer

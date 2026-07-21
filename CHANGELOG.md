@@ -85,6 +85,10 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   identity и lifecycle start/step/close. ABI fixture проверяет process isolation,
   а opt-in macOS arm64 smoke собирает минимальную сеть и выполняет реальный
   пятишаговый run на headless SUMO `1.27.1`; platform packaging остаётся E10-T11.
+- Добавлен `roadsim-backend-sumo` straight-network exporter: explicit speed,
+  deterministic plain XML, lossless CSN/Design→SUMO lane mapping и object-linked
+  rejection неподдерживаемых lane uses. Export проходит exact `netconvert` и
+  реальный пятишаговый worker/libsumo smoke.
 
 ### Changed
 

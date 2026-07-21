@@ -1,3 +1,11 @@
+use roadsim_backend_sumo::{
+    SUMO_EDGES_FILE, SUMO_NODES_FILE, SumoRoadExportOptions, export_straight_network,
+};
+use roadsim_compiled_network::{
+    CapabilityId, CapabilityRequirements, CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader,
+    CompiledPoint, LaneOrigin, LaneTable, SourceRevision,
+};
+use roadsim_types::{CorridorId, LaneId, Sha256Digest};
 use roadsim_worker_client::{
     RunDirectoryLimits, RunDirectoryManager, RunState, WorkerClient, WorkerClientConfig,
     WorkerClientErrorCode,
@@ -163,6 +171,93 @@ fn real_libsumo_runs_minimal_start_step_close() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+#[ignore = "requires ROADSIM_SUMO_BRIDGE and ROADSIM_NETCONVERT for exact SUMO 1.27.1"]
+fn real_libsumo_runs_exported_straight_csn() {
+    let bridge = PathBuf::from(
+        std::env::var_os("ROADSIM_SUMO_BRIDGE").expect("ROADSIM_SUMO_BRIDGE is required"),
+    );
+    let netconvert = PathBuf::from(
+        std::env::var_os("ROADSIM_NETCONVERT").expect("ROADSIM_NETCONVERT is required"),
+    );
+    assert!(bridge.is_absolute(), "ROADSIM_SUMO_BRIDGE must be absolute");
+    assert!(
+        netconvert.is_absolute(),
+        "ROADSIM_NETCONVERT must be absolute"
+    );
+    let root = std::env::temp_dir().join(format!(
+        "roadsim-real-exported-csn-smoke-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    let manager = RunDirectoryManager::new(&root, RunDirectoryLimits::new(1, 8).unwrap()).unwrap();
+    let mut run = manager.create_run(92, 1).unwrap();
+    let network = one_lane_network();
+    let bundle =
+        export_straight_network(&network, SumoRoadExportOptions::new(13.89).unwrap()).unwrap();
+    assert_eq!(
+        bundle.lane_mappings()[0].origin(),
+        network
+            .lane_origin(bundle.lane_mappings()[0].compiled_lane_id())
+            .unwrap()
+    );
+    std::fs::write(run.path().join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
+    std::fs::write(run.path().join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
+    std::fs::write(
+        run.path().join("roadsim.sumocfg"),
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n    <input><net-file value=\"roadsim.net.xml\"/></input>\n    <time><begin value=\"0\"/><end value=\"1\"/></time>\n</configuration>\n",
+    )
+    .unwrap();
+    let output = Command::new(netconvert)
+        .current_dir(run.path())
+        .args([
+            "--node-files",
+            SUMO_NODES_FILE,
+            "--edge-files",
+            SUMO_EDGES_FILE,
+            "--output-file",
+            "roadsim.net.xml",
+            "--no-turnarounds",
+            "true",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "netconvert failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    run.mark_running().unwrap();
+
+    let mut client = WorkerClient::spawn(
+        WorkerClientConfig::new(env!("CARGO_BIN_EXE_sumo-worker"), token())
+            .with_argument("--bridge")
+            .with_argument(bridge)
+            .with_work_directory(run.path()),
+    )
+    .unwrap();
+    client
+        .handshake_with_engine(
+            vec!["simulation.lifecycle.step.v1".to_owned()],
+            exact_engine(),
+            REAL_LIBSUMO_TIMEOUT,
+        )
+        .unwrap();
+    let config = WorkerSessionConfig::new("roadsim.sumocfg", 7, 100).unwrap();
+    client
+        .open_session(92, config, REAL_LIBSUMO_TIMEOUT)
+        .unwrap();
+    assert_eq!(client.step_session(92, 5, REAL_LIBSUMO_TIMEOUT).unwrap(), 5);
+    client.close_session(92, REAL_LIBSUMO_TIMEOUT).unwrap();
+    client.shutdown(REAL_LIBSUMO_TIMEOUT).unwrap();
+    run.mark_completed().unwrap();
+    drop(run);
+    assert_eq!(manager.recover().unwrap()[0].state(), RunState::Completed);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 fn spawn_with_bridge(bridge: &PathBuf, token_character: &str) -> WorkerClient {
     WorkerClient::spawn(
@@ -199,4 +294,24 @@ fn copy_minimal_fixture(destination: &std::path::Path) {
     ] {
         std::fs::copy(source.join(name), destination.join(name)).unwrap();
     }
+}
+
+fn one_lane_network() -> CompiledNetwork {
+    let lanes = LaneTable::new(
+        vec![CompiledPoint::new(0.0, 0.0)],
+        vec![CompiledPoint::new(100.0, 0.0)],
+        vec![3.5],
+        vec![CompiledLaneUse::GeneralTraffic],
+    )
+    .unwrap();
+    CompiledNetwork::new(
+        CompiledNetworkHeader::new(SourceRevision::new(1), Sha256Digest::from_bytes([1; 32])),
+        lanes,
+        vec![LaneOrigin::new(
+            CorridorId::from_u128(10),
+            LaneId::from_u128(11),
+        )],
+        CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
+    )
+    .unwrap()
 }

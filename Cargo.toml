@@ -3,6 +3,7 @@ members = [
     "crates/roadsim-app",
     "crates/roadsim-backend-api",
     "crates/roadsim-backend-fake",
+    "crates/roadsim-backend-sumo",
     "crates/roadsim-cli",
     "crates/roadsim-commands",
     "crates/roadsim-compiled-network",

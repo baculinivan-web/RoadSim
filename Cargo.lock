@@ -1616,6 +1616,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "roadsim-backend-sumo"
+version = "0.1.0"
+dependencies = [
+ "roadsim-compiled-network",
+ "roadsim-types",
+]
+
+[[package]]
 name = "roadsim-cli"
 version = "0.1.0"
 
@@ -1893,6 +1901,9 @@ name = "sumo-worker"
 version = "0.1.0"
 dependencies = [
  "libloading",
+ "roadsim-backend-sumo",
+ "roadsim-compiled-network",
+ "roadsim-types",
  "roadsim-worker-client",
  "roadsim-worker-protocol",
 ]

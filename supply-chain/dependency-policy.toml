@@ -79,6 +79,22 @@ to = [
 rationale = "ARCHITECTURE §10: the in-memory contract test double must remain deterministic and independent of UI and SUMO implementation details"
 
 [[rules]]
+id = "sumo-backend-is-ui-and-domain-independent"
+from = ["roadsim-backend-sumo"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-commands",
+    "roadsim-domain",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4/§10: SUMO adapter consumes immutable CSN contracts and must not depend on UI, mutable Design Model, or in-process libsumo"
+
+[[rules]]
 id = "renderer-does-not-own-domain"
 from = ["roadsim-renderer"]
 to = ["roadsim-commands", "roadsim-domain"]

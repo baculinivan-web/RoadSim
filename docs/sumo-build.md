@@ -76,15 +76,17 @@ loader/lifecycle/crash isolation отдельно от реального engine
 ROADSIM_SUMO_BRIDGE=<absolute-path-to-libroadsim_sumo_bridge> \
 ROADSIM_NETCONVERT=<absolute-path-to-netconvert-1.27.1> \
 cargo +1.88.0 test -p sumo-worker --test lifecycle \
-  real_libsumo_runs_minimal_start_step_close -- \
+  real_libsumo_runs_ -- \
   --ignored --nocapture --test-threads=1
 ```
 
 Этот test успешно выполнен на macOS arm64 против headless libsumo, собранного
 из exact commit `7717f2379d9e314a0c81c5cec748444de06a2a91`. Он закрывает
-core lifecycle E10-T02, но не является clean-machine/package evidence для
-Windows, macOS x64 и Linux; воспроизводимый builder, packages и checksums
-остаются в E10-T11.
+core lifecycle E10-T02. Второй выбранный test materializes typed
+`roadsim-backend-sumo` straight-network export, проверяет source mapping и
+запускает его тем же worker, закрывая E10-T03 road/lane scope. Эти tests не
+являются clean-machine/package evidence для Windows, macOS x64 и Linux;
+воспроизводимый builder, packages и checksums остаются в E10-T11.
 
 ## License boundary
 
