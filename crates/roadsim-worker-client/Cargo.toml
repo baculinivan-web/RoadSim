@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 roadsim-worker-protocol = { version = "0.1.0", path = "../roadsim-worker-protocol" }
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

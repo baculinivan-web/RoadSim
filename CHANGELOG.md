@@ -74,6 +74,10 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлен data protocol v1 baseline на отдельном inherited pipe: SoA visual
   batches допускают наблюдаемое latest-wins dropping, а versioned metrics и
   terminal events используют bounded reliable backpressure без per-agent IPC.
+- Добавлен worker run-directory journal schema v1 и bounded manager: child
+  запускается в отдельном generated workdir, interrupted state восстанавливается
+  как `Incomplete`, а retention не удаляет `Failed/Incomplete` молча. Это первый
+  marker format; предыдущей версии и migration нет.
 
 ### Changed
 
@@ -95,6 +99,8 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   station increment; tolerance непрерывности всегда передаётся вызывающей стороной.
 - Worker control reader отклоняет empty, malformed и превышающий 1 MiB frame до
   payload allocation; version/auth/capability failures имеют стабильные codes.
+- Worker runtime отклоняет symlink/unknown root entries, oversized/corrupt state
+  journals и invalid lifecycle transitions до cleanup или публикации нового state.
 - Corridor validation повторно проверяется при deserialization и отклоняет
   dangling/duplicate lane references, нулевые widths, неупорядоченные или выходящие
   за reference line sections и непредставимую суммарную ширину.

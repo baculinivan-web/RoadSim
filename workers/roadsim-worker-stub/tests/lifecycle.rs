@@ -1,5 +1,6 @@
 use roadsim_worker_client::{
-    ReliableWorkerEvent, WorkerClient, WorkerClientConfig, WorkerClientErrorCode,
+    ReliableWorkerEvent, RunDirectoryLimits, RunDirectoryManager, RunState, WorkerClient,
+    WorkerClientConfig, WorkerClientErrorCode,
 };
 use roadsim_worker_protocol::{
     AuthToken, RequestEnvelope, RequestPayload, ResponseEnvelope, ResponsePayload, TerminalStatus,
@@ -214,4 +215,36 @@ fn graceful_shutdown_preserves_reliable_batches_already_in_the_pipe() {
         event,
         ReliableWorkerEvent::MetricBatch { session_id: 77, .. }
     )));
+}
+
+#[test]
+fn worker_starts_inside_owned_run_directory_and_journals_completion() {
+    let root = std::env::temp_dir().join(format!(
+        "roadsim-worker-workdir-test-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    let limits = RunDirectoryLimits::new(2, 8).unwrap();
+    let manager = RunDirectoryManager::new(&root, limits).unwrap();
+    let mut run = manager.create_run(91, 1).unwrap();
+    run.mark_running().unwrap();
+
+    let mut client = WorkerClient::spawn(
+        config(token("a"))
+            .with_argument("--require-workdir")
+            .with_work_directory(run.path()),
+    )
+    .unwrap();
+    client.handshake(Vec::new(), TIMEOUT).unwrap();
+    client.ping(TIMEOUT).unwrap();
+    client.shutdown(TIMEOUT).unwrap();
+    run.mark_completed().unwrap();
+    drop(run);
+
+    let records = manager.recover().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].state(), RunState::Completed);
+    std::fs::remove_dir_all(&root).unwrap();
 }

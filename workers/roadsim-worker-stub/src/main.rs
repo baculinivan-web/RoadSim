@@ -16,6 +16,7 @@ enum Mode {
     CrashOnPing,
     HangOnPing,
     EmitBatchesOnPing,
+    RequireWorkdir,
 }
 
 fn main() -> ExitCode {
@@ -24,8 +25,12 @@ fn main() -> ExitCode {
         Some(value) if value == "--crash-on-ping" => Mode::CrashOnPing,
         Some(value) if value == "--hang-on-ping" => Mode::HangOnPing,
         Some(value) if value == "--emit-batches-on-ping" => Mode::EmitBatchesOnPing,
+        Some(value) if value == "--require-workdir" => Mode::RequireWorkdir,
         Some(_) => return ExitCode::from(64),
     };
+    if mode == Mode::RequireWorkdir && !workdir_marker_is_present() {
+        return ExitCode::from(72);
+    }
     let Ok(expected_token) = env::var(WORKER_TOKEN_ENV) else {
         return ExitCode::from(78);
     };
@@ -234,6 +239,7 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
                     }
                     ResponsePayload::Pong
                 }
+                Mode::RequireWorkdir => ResponsePayload::Pong,
             },
             RequestPayload::OpenSession => {
                 let Some(session_id) = request.session_id else {
@@ -309,6 +315,19 @@ fn run(expected_token: AuthToken, mode: Mode) -> ExitCode {
             return ExitCode::SUCCESS;
         }
     }
+}
+
+fn workdir_marker_is_present() -> bool {
+    let Ok(current_directory) = env::current_dir() else {
+        return false;
+    };
+    let Some(name) = current_directory.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.len() == 37
+        && name.starts_with("run-")
+        && name.as_bytes().get(20) == Some(&b'-')
+        && current_directory.join("state-00000000.json").is_file()
 }
 
 fn supported_capabilities(mode: Mode) -> &'static [&'static str] {

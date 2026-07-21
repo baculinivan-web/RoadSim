@@ -434,6 +434,14 @@ backpressure. macOS child-process contract test доказывает 32→1 visu
 12/12 ordered metrics без потерь. Arrow/shared-memory выбор, benchmark и
 Windows/Linux CI evidence остаются до принятия ADR-Q09.
 
+Статус E09-T10: 🟡 добавлен bounded `RunDirectoryManager`: отдельный generated
+workdir передаётся child process как `current_dir`, append-only schema v1 journal
+проверяет lifecycle, а startup recovery переводит прерванные `Starting/Running`
+в `Incomplete`. Retention автоматически удаляет только старейшие
+`Completed/Cancelled`; `Failed/Incomplete` сохраняются и блокируют capacity без
+silent cleanup. CPU/memory/disk-byte OS quotas и platform sandbox остаются для
+E10/E16.
+
 Preview вертикального пути E11: desktop наблюдаемо выполняет встроенный Design
 Model → CSN → fake backend → 18-agent frame overlay и предоставляет
 Start/Pause/Resume/Stop с unit lifecycle tests. Agent frames содержат метрический

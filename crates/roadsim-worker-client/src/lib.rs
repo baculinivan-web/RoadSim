@@ -4,6 +4,13 @@
 //! mutable client permits one in-flight request, making response correlation and
 //! ordering explicit without an async runtime.
 
+mod workdir;
+
+pub use workdir::{
+    RunDirectory, RunDirectoryError, RunDirectoryErrorCode, RunDirectoryIdentity,
+    RunDirectoryLimits, RunDirectoryManager, RunDirectoryRecord, RunState,
+};
+
 use roadsim_worker_protocol::{
     AuthToken, DataValidationErrorCode, FrameError, FrameErrorCode, MetricBatch, RequestEnvelope,
     RequestPayload, ResponseEnvelope, ResponsePayload, TerminalEvent, VisualFrameBatch,
@@ -30,12 +37,13 @@ const RESPONSE_QUEUE_CAPACITY: usize = 8;
 const RELIABLE_DATA_QUEUE_CAPACITY: usize = 8;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WorkerClientConfig {
     pub program: PathBuf,
     pub arguments: Vec<OsString>,
     pub auth_token: AuthToken,
     pub protocol_version: u32,
+    pub work_directory: Option<PathBuf>,
 }
 
 impl WorkerClientConfig {
@@ -46,6 +54,7 @@ impl WorkerClientConfig {
             arguments: Vec::new(),
             auth_token,
             protocol_version: WORKER_PROTOCOL_VERSION,
+            work_directory: None,
         }
     }
 
@@ -58,6 +67,12 @@ impl WorkerClientConfig {
     #[must_use]
     pub const fn with_protocol_version(mut self, protocol_version: u32) -> Self {
         self.protocol_version = protocol_version;
+        self
+    }
+
+    #[must_use]
+    pub fn with_work_directory(mut self, work_directory: impl Into<PathBuf>) -> Self {
+        self.work_directory = Some(work_directory.into());
         self
     }
 }
@@ -234,9 +249,14 @@ pub struct WorkerClient {
 
 impl WorkerClient {
     pub fn spawn(config: WorkerClientConfig) -> Result<Self, WorkerClientError> {
-        let mut child = Command::new(&config.program)
+        let mut command = Command::new(&config.program);
+        command
             .args(&config.arguments)
-            .env(WORKER_TOKEN_ENV, config.auth_token.expose_for_transport())
+            .env(WORKER_TOKEN_ENV, config.auth_token.expose_for_transport());
+        if let Some(work_directory) = &config.work_directory {
+            command.current_dir(work_directory);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

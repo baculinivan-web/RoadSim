@@ -1673,6 +1673,8 @@ name = "roadsim-worker-client"
 version = "0.1.0"
 dependencies = [
  "roadsim-worker-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -179,3 +179,9 @@ SoA DTO, latest-frame slot и reliable bounded queue используют `std` 
 bounded `serde_json`. Это измерительный baseline, а не предварительное принятие
 JSON вместо Arrow IPC/shared memory; любая такая замена проходит новый MSRV,
 license, unsafe/native и vulnerability review по ADR-Q09.
+
+E09-T10 не добавляет новые third-party packages. `roadsim-worker-client`
+напрямую использует уже закреплённые `serde`/`serde_json` для bounded journal DTO;
+filesystem/process API остаются в этой boundary crate. Marker read проверяет
+metadata size до allocation, записи используют `create_new` + `sync_all`, а
+paths генерируются из numeric session ID без пользовательской строки.
