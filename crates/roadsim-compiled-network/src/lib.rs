@@ -4,12 +4,16 @@
 //! UI/backend implementation types. A compiler produces a complete value and
 //! only then publishes it to a backend through `Arc<CompiledNetwork>`.
 
-use roadsim_types::{CorridorId, LaneId, Sha256Digest};
+use roadsim_types::{
+    CorridorId, CrossingId, JunctionId, LaneId, Sha256Digest, SidewalkId, WalkingAreaId,
+};
 use serde::Serialize;
 use std::{collections::BTreeSet, error::Error, fmt};
 
 /// Schema of the in-memory CSN contract.
-pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 1;
+pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 2;
+pub const MAX_GRAPH_NODES: u32 = 1_000_000;
+pub const MAX_GRAPH_EDGES: usize = 4_000_000;
 
 /// Monotonic source model revision captured when compilation starts.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -47,6 +51,8 @@ pub enum CapabilityId {
     BicycleLanes,
     #[serde(rename = "road.parking_lanes")]
     ParkingLanes,
+    #[serde(rename = "pedestrian.walking_areas.basic")]
+    PedestrianWalkingAreasBasic,
 }
 
 impl CapabilityId {
@@ -57,6 +63,7 @@ impl CapabilityId {
             Self::TransitBusLanes => "transit.bus_lanes",
             Self::BicycleLanes => "road.bicycle_lanes",
             Self::ParkingLanes => "road.parking_lanes",
+            Self::PedestrianWalkingAreasBasic => "pedestrian.walking_areas.basic",
         }
     }
 }
@@ -98,6 +105,293 @@ impl CompiledLaneId {
     pub const fn get(self) -> u32 {
         self.0
     }
+}
+
+/// One directed coarse adjacency between compiled road lanes.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct LaneAdjacency {
+    from: CompiledLaneId,
+    to: CompiledLaneId,
+    junction_id: JunctionId,
+}
+
+impl LaneAdjacency {
+    #[must_use]
+    pub const fn new(from: CompiledLaneId, to: CompiledLaneId, junction_id: JunctionId) -> Self {
+        Self {
+            from,
+            to,
+            junction_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn from(self) -> CompiledLaneId {
+        self.from
+    }
+
+    #[must_use]
+    pub const fn to(self) -> CompiledLaneId {
+        self.to
+    }
+
+    #[must_use]
+    pub const fn junction_id(self) -> JunctionId {
+        self.junction_id
+    }
+}
+
+/// Compact directed lane reachability graph. Movement geometry is added later.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct LaneGraph {
+    node_count: u32,
+    adjacency: Vec<LaneAdjacency>,
+}
+
+impl LaneGraph {
+    pub fn new(node_count: u32, mut adjacency: Vec<LaneAdjacency>) -> Result<Self, GraphError> {
+        if node_count > MAX_GRAPH_NODES {
+            return Err(GraphError(GraphErrorCode::TooManyNodes));
+        }
+        if adjacency.len() > MAX_GRAPH_EDGES {
+            return Err(GraphError(GraphErrorCode::TooManyEdges));
+        }
+        adjacency.sort_unstable();
+        adjacency.dedup();
+        if adjacency
+            .iter()
+            .any(|edge| edge.from().get() >= node_count || edge.to().get() >= node_count)
+        {
+            return Err(GraphError(GraphErrorCode::NodeOutsideGraph));
+        }
+        Ok(Self {
+            node_count,
+            adjacency,
+        })
+    }
+
+    #[must_use]
+    pub const fn node_count(&self) -> u32 {
+        self.node_count
+    }
+
+    #[must_use]
+    pub fn adjacency(&self) -> &[LaneAdjacency] {
+        &self.adjacency
+    }
+
+    #[must_use]
+    pub fn can_reach(&self, from: CompiledLaneId, to: CompiledLaneId) -> bool {
+        can_reach(
+            self.node_count,
+            from.get(),
+            to.get(),
+            self.adjacency
+                .iter()
+                .map(|edge| (edge.from().get(), edge.to().get())),
+        )
+    }
+}
+
+/// Compact pedestrian graph node ID.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct CompiledPedestrianNodeId(u32);
+
+impl CompiledPedestrianNodeId {
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Design origin retained for every pedestrian graph node.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "id")]
+pub enum PedestrianNodeOrigin {
+    WalkingArea(WalkingAreaId),
+    Sidewalk(SidewalkId),
+}
+
+/// One directed pedestrian link sourced from a Design crossing.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct PedestrianAdjacency {
+    from: CompiledPedestrianNodeId,
+    to: CompiledPedestrianNodeId,
+    crossing_id: CrossingId,
+}
+
+impl PedestrianAdjacency {
+    #[must_use]
+    pub const fn new(
+        from: CompiledPedestrianNodeId,
+        to: CompiledPedestrianNodeId,
+        crossing_id: CrossingId,
+    ) -> Self {
+        Self {
+            from,
+            to,
+            crossing_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn from(self) -> CompiledPedestrianNodeId {
+        self.from
+    }
+
+    #[must_use]
+    pub const fn to(self) -> CompiledPedestrianNodeId {
+        self.to
+    }
+
+    #[must_use]
+    pub const fn crossing_id(self) -> CrossingId {
+        self.crossing_id
+    }
+}
+
+/// Compact pedestrian reachability graph with complete node/link source maps.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PedestrianGraph {
+    origins: Vec<PedestrianNodeOrigin>,
+    adjacency: Vec<PedestrianAdjacency>,
+}
+
+impl PedestrianGraph {
+    pub fn new(
+        origins: Vec<PedestrianNodeOrigin>,
+        mut adjacency: Vec<PedestrianAdjacency>,
+    ) -> Result<Self, GraphError> {
+        if origins.len() > MAX_GRAPH_NODES as usize {
+            return Err(GraphError(GraphErrorCode::TooManyNodes));
+        }
+        if adjacency.len() > MAX_GRAPH_EDGES {
+            return Err(GraphError(GraphErrorCode::TooManyEdges));
+        }
+        let mut unique_origins = origins.clone();
+        unique_origins.sort_unstable();
+        unique_origins.dedup();
+        if unique_origins.len() != origins.len() {
+            return Err(GraphError(GraphErrorCode::DuplicateOrigin));
+        }
+        adjacency.sort_unstable();
+        adjacency.dedup();
+        let node_count = origins.len() as u32;
+        if adjacency
+            .iter()
+            .any(|edge| edge.from().get() >= node_count || edge.to().get() >= node_count)
+        {
+            return Err(GraphError(GraphErrorCode::NodeOutsideGraph));
+        }
+        Ok(Self { origins, adjacency })
+    }
+
+    #[must_use]
+    pub fn origins(&self) -> &[PedestrianNodeOrigin] {
+        &self.origins
+    }
+
+    #[must_use]
+    pub fn adjacency(&self) -> &[PedestrianAdjacency] {
+        &self.adjacency
+    }
+
+    #[must_use]
+    pub fn node_for_walking_area(&self, id: WalkingAreaId) -> Option<CompiledPedestrianNodeId> {
+        self.origins
+            .iter()
+            .position(|origin| *origin == PedestrianNodeOrigin::WalkingArea(id))
+            .map(|index| CompiledPedestrianNodeId::new(index as u32))
+    }
+
+    #[must_use]
+    pub fn can_reach(&self, from: CompiledPedestrianNodeId, to: CompiledPedestrianNodeId) -> bool {
+        can_reach(
+            self.origins.len() as u32,
+            from.get(),
+            to.get(),
+            self.adjacency
+                .iter()
+                .map(|edge| (edge.from().get(), edge.to().get())),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphErrorCode {
+    TooManyNodes,
+    TooManyEdges,
+    DuplicateOrigin,
+    NodeOutsideGraph,
+}
+
+impl GraphErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TooManyNodes => "csn.graph.nodes.too_many",
+            Self::TooManyEdges => "csn.graph.edges.too_many",
+            Self::DuplicateOrigin => "csn.graph.origin.duplicate",
+            Self::NodeOutsideGraph => "csn.graph.node.outside_graph",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphError(GraphErrorCode);
+
+impl GraphError {
+    #[must_use]
+    pub const fn code(self) -> GraphErrorCode {
+        self.0
+    }
+}
+
+impl fmt::Display for GraphError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+impl Error for GraphError {}
+
+fn can_reach(
+    node_count: u32,
+    from: u32,
+    to: u32,
+    edges: impl IntoIterator<Item = (u32, u32)>,
+) -> bool {
+    if from >= node_count || to >= node_count {
+        return false;
+    }
+    if from == to {
+        return true;
+    }
+    let mut edges: Vec<_> = edges.into_iter().collect();
+    edges.sort_unstable();
+    let mut visited = vec![false; node_count as usize];
+    let mut pending = vec![from];
+    visited[from as usize] = true;
+    while let Some(node) = pending.pop() {
+        let start = edges.partition_point(|(source, _)| *source < node);
+        let end = edges.partition_point(|(source, _)| *source <= node);
+        for (_, target) in &edges[start..end] {
+            if *target == to {
+                return true;
+            }
+            if !visited[*target as usize] {
+                visited[*target as usize] = true;
+                pending.push(*target);
+            }
+        }
+    }
+    false
 }
 
 /// Backend-independent semantic use retained for capability negotiation.
@@ -319,6 +613,8 @@ impl CompiledNetworkHeader {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkErrorCode {
     SourceMapLengthMismatch,
+    LaneGraphLengthMismatch,
+    GraphLimitExceeded,
 }
 
 impl NetworkErrorCode {
@@ -326,6 +622,8 @@ impl NetworkErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SourceMapLengthMismatch => "csn.source_map.length_mismatch",
+            Self::LaneGraphLengthMismatch => "csn.lane_graph.length_mismatch",
+            Self::GraphLimitExceeded => "csn.graph.limit_exceeded",
         }
     }
 }
@@ -354,6 +652,8 @@ pub struct CompiledNetwork {
     header: CompiledNetworkHeader,
     lanes: LaneTable,
     lane_origins: Vec<LaneOrigin>,
+    lane_graph: LaneGraph,
+    pedestrian_graph: PedestrianGraph,
     requirements: CapabilityRequirements,
 }
 
@@ -364,13 +664,40 @@ impl CompiledNetwork {
         lane_origins: Vec<LaneOrigin>,
         requirements: CapabilityRequirements,
     ) -> Result<Self, NetworkError> {
+        let lane_graph = LaneGraph::new(lanes.len() as u32, Vec::new())
+            .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
+        let pedestrian_graph =
+            PedestrianGraph::new(Vec::new(), Vec::new()).expect("empty graph is valid");
+        Self::new_with_graphs(
+            header,
+            lanes,
+            lane_origins,
+            lane_graph,
+            pedestrian_graph,
+            requirements,
+        )
+    }
+
+    pub fn new_with_graphs(
+        header: CompiledNetworkHeader,
+        lanes: LaneTable,
+        lane_origins: Vec<LaneOrigin>,
+        lane_graph: LaneGraph,
+        pedestrian_graph: PedestrianGraph,
+        requirements: CapabilityRequirements,
+    ) -> Result<Self, NetworkError> {
         if lanes.len() != lane_origins.len() {
             return Err(NetworkError(NetworkErrorCode::SourceMapLengthMismatch));
+        }
+        if lanes.len() != lane_graph.node_count() as usize {
+            return Err(NetworkError(NetworkErrorCode::LaneGraphLengthMismatch));
         }
         Ok(Self {
             header,
             lanes,
             lane_origins,
+            lane_graph,
+            pedestrian_graph,
             requirements,
         })
     }
@@ -388,6 +715,16 @@ impl CompiledNetwork {
     #[must_use]
     pub fn lane_origin(&self, id: CompiledLaneId) -> Option<LaneOrigin> {
         self.lane_origins.get(id.get() as usize).copied()
+    }
+
+    #[must_use]
+    pub const fn lane_graph(&self) -> &LaneGraph {
+        &self.lane_graph
+    }
+
+    #[must_use]
+    pub const fn pedestrian_graph(&self) -> &PedestrianGraph {
+        &self.pedestrian_graph
     }
 
     #[must_use]
@@ -461,5 +798,76 @@ mod tests {
             serde_json::to_string(&requirements).unwrap(),
             r#"["road.vehicles.basic","transit.bus_lanes"]"#
         );
+    }
+
+    #[test]
+    fn compact_graphs_validate_edges_and_answer_directed_reachability() {
+        let graph = LaneGraph::new(
+            3,
+            vec![
+                LaneAdjacency::new(
+                    CompiledLaneId::new(1),
+                    CompiledLaneId::new(2),
+                    JunctionId::from_u128(2),
+                ),
+                LaneAdjacency::new(
+                    CompiledLaneId::new(0),
+                    CompiledLaneId::new(1),
+                    JunctionId::from_u128(1),
+                ),
+            ],
+        )
+        .unwrap();
+        assert!(graph.can_reach(CompiledLaneId::new(0), CompiledLaneId::new(2)));
+        assert!(!graph.can_reach(CompiledLaneId::new(2), CompiledLaneId::new(0)));
+        assert_eq!(
+            LaneGraph::new(
+                1,
+                vec![LaneAdjacency::new(
+                    CompiledLaneId::new(0),
+                    CompiledLaneId::new(1),
+                    JunctionId::from_u128(1),
+                )],
+            )
+            .unwrap_err()
+            .code(),
+            GraphErrorCode::NodeOutsideGraph
+        );
+        assert_eq!(
+            LaneGraph::new(MAX_GRAPH_NODES + 1, Vec::new())
+                .unwrap_err()
+                .code(),
+            GraphErrorCode::TooManyNodes
+        );
+    }
+
+    #[test]
+    fn pedestrian_graph_retains_node_and_crossing_sources() {
+        let first = WalkingAreaId::from_u128(1);
+        let second = WalkingAreaId::from_u128(2);
+        let crossing = CrossingId::from_u128(3);
+        let graph = PedestrianGraph::new(
+            vec![
+                PedestrianNodeOrigin::WalkingArea(first),
+                PedestrianNodeOrigin::WalkingArea(second),
+            ],
+            vec![
+                PedestrianAdjacency::new(
+                    CompiledPedestrianNodeId::new(0),
+                    CompiledPedestrianNodeId::new(1),
+                    crossing,
+                ),
+                PedestrianAdjacency::new(
+                    CompiledPedestrianNodeId::new(1),
+                    CompiledPedestrianNodeId::new(0),
+                    crossing,
+                ),
+            ],
+        )
+        .unwrap();
+        let first_node = graph.node_for_walking_area(first).unwrap();
+        let second_node = graph.node_for_walking_area(second).unwrap();
+        assert!(graph.can_reach(first_node, second_node));
+        assert_eq!(graph.adjacency()[0].crossing_id(), crossing);
     }
 }

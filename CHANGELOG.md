@@ -89,8 +89,16 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   deterministic plain XML, lossless CSN/Design→SUMO lane mapping и object-linked
   rejection неподдерживаемых lane uses. Export проходит exact `netconvert` и
   реальный пятишаговый worker/libsumo smoke.
+- CSN расширена compact directed lane/pedestrian graphs с source mapping до
+  junction approaches, walking areas, sidewalks и crossings. Compiler проверяет
+  car/bus/pedestrian demand reachability до backend и возвращает object-linked
+  diagnostic для disconnected endpoints.
 
 ### Changed
+
+- In-memory CSN schema повышена с v1 до v2: semantic content hash теперь включает
+  lane/pedestrian adjacency и их source maps. V1 runtime migration не вводится,
+  поскольку persisted CSN artifacts ещё не публиковались.
 
 - Worker control/data protocol повышен с v1 до v2: handshake обязательно
   публикует bounded exact engine name/version/build revision и может потребовать

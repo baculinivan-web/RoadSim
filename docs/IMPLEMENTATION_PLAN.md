@@ -369,7 +369,15 @@ meshes и instanced/performance acceptance E05-T04…T08 ещё не реали�
 Compact lane arrays, source map, stable SHA-256 content hash и первые capability
 IDs покрыты unit/regression/property tests. Arc/transition и переменный профиль
 явно блокируются diagnostics с Design object refs; полноценная curve evaluation,
-lane graph, junctions и весь capability manifest остаются следующими задачами.
+junction movements и весь capability manifest остаются следующими задачами.
+
+Статус E07-T04: 🟢 CSN schema v2 содержит compact directed lane adjacency и
+pedestrian graph с полным lane/walking-area/sidewalk/crossing source mapping.
+Junction approaches создают только coarse inter-corridor reachability без
+преждевременной turn geometry; crossings создают двунаправленные pedestrian
+links. Car/bus и pedestrian demand с disconnected endpoints блокируется до
+backend compile стабильной object-linked diagnostic. Unit, regression и chain
+property tests покрывают direction, transitive reachability и invalid graph IDs.
 
 ## 16. Epic E08 — Нормативный движок RU
 

@@ -5,15 +5,22 @@
 //! of being simplified silently.
 
 use roadsim_compiled_network::{
-    COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledLaneUse,
-    CompiledNetwork, CompiledNetworkHeader, CompiledPoint, LaneOrigin, LaneTable, SourceRevision,
+    COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledLaneId,
+    CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader, CompiledPedestrianNodeId,
+    CompiledPoint, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable, MAX_GRAPH_EDGES,
+    PedestrianAdjacency, PedestrianGraph, PedestrianNodeOrigin, SourceRevision,
 };
 use roadsim_domain::{
-    Corridor, LaneDirection, LaneSlice, LaneUse, Project, ReferenceLineElementKind,
+    Corridor, CorridorEnd, DemandEndpoint, DemandMode, LaneDirection, LaneSlice, LaneUse, Project,
+    ReferenceLineElementKind,
 };
 use roadsim_types::{ObjectRef, Sha256Digest};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 /// Stable compilation failure classifications.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +29,10 @@ pub enum CompileErrorCode {
     UnsupportedReferenceElement,
     VariableCrossSectionUnsupported,
     LaneTableInvariant,
+    LaneGraphInvariant,
+    PedestrianGraphInvariant,
+    DemandEndpointUnreachable,
+    DemandModeUnsupported,
     NetworkInvariant,
 }
 
@@ -35,6 +46,10 @@ impl CompileErrorCode {
                 "compiler.corridor.variable_cross_section_unsupported"
             }
             Self::LaneTableInvariant => "compiler.lane_table.invariant",
+            Self::LaneGraphInvariant => "compiler.lane_graph.invariant",
+            Self::PedestrianGraphInvariant => "compiler.pedestrian_graph.invariant",
+            Self::DemandEndpointUnreachable => "compiler.demand.endpoint_unreachable",
+            Self::DemandModeUnsupported => "compiler.demand.mode_unsupported",
             Self::NetworkInvariant => "compiler.network.invariant",
         }
     }
@@ -101,12 +116,29 @@ pub fn compile_project(
 
     let lanes = LaneTable::new(builder.starts, builder.ends, builder.widths_m, builder.uses)
         .ok_or_else(|| CompileError::new(CompileErrorCode::LaneTableInvariant, Vec::new()))?;
+    let lane_graph = compile_lane_graph(project, &builder.origins, lanes.len())?;
+    let pedestrian_graph = compile_pedestrian_graph(project)?;
+    if !pedestrian_graph.origins().is_empty() {
+        builder
+            .requirements
+            .insert(CapabilityId::PedestrianWalkingAreasBasic);
+    }
+    validate_demand_reachability(project, &builder.origins, &lane_graph, &pedestrian_graph)?;
     let requirements = CapabilityRequirements::new(builder.requirements);
-    let hash = content_hash(project, &lanes, &builder.origins, &requirements);
-    CompiledNetwork::new(
+    let hash = content_hash(
+        project,
+        &lanes,
+        &builder.origins,
+        &lane_graph,
+        &pedestrian_graph,
+        &requirements,
+    );
+    CompiledNetwork::new_with_graphs(
         CompiledNetworkHeader::new(source_revision, hash),
         lanes,
         builder.origins,
+        lane_graph,
+        pedestrian_graph,
         requirements,
     )
     .map_err(|_| CompileError::new(CompileErrorCode::NetworkInvariant, Vec::new()))
@@ -220,10 +252,201 @@ const fn capability_for(use_kind: CompiledLaneUse) -> CapabilityId {
     }
 }
 
+fn compile_lane_graph(
+    project: &Project,
+    origins: &[LaneOrigin],
+    lane_count: usize,
+) -> Result<LaneGraph, CompileError> {
+    let lane_ids: BTreeMap<_, _> = origins
+        .iter()
+        .enumerate()
+        .map(|(index, origin)| (origin.lane_id(), CompiledLaneId::new(index as u32)))
+        .collect();
+    let mut adjacency = Vec::new();
+    for junction in project.design_catalog().junctions() {
+        let mut incoming = Vec::new();
+        let mut outgoing = Vec::new();
+        for approach in junction.approaches() {
+            let corridor = project
+                .design_catalog()
+                .corridor(approach.corridor_id())
+                .expect("DesignCatalog validates junction corridor references");
+            for lane in corridor.lane_definitions() {
+                let compiled_id = *lane_ids
+                    .get(&lane.id())
+                    .expect("corridor compilation publishes every lane origin");
+                if lane_exits_at(lane.direction(), approach.end()) {
+                    incoming.push((compiled_id, corridor.id()));
+                }
+                if lane_enters_at(lane.direction(), approach.end()) {
+                    outgoing.push((compiled_id, corridor.id()));
+                }
+            }
+        }
+        for (from, from_corridor) in &incoming {
+            for (to, to_corridor) in &outgoing {
+                if from_corridor != to_corridor {
+                    if adjacency.len() == MAX_GRAPH_EDGES {
+                        return Err(CompileError::new(
+                            CompileErrorCode::LaneGraphInvariant,
+                            vec![junction.id().into()],
+                        ));
+                    }
+                    adjacency.push(LaneAdjacency::new(*from, *to, junction.id()));
+                }
+            }
+        }
+    }
+    LaneGraph::new(lane_count as u32, adjacency)
+        .map_err(|_| CompileError::new(CompileErrorCode::LaneGraphInvariant, Vec::new()))
+}
+
+const fn lane_enters_at(direction: LaneDirection, end: CorridorEnd) -> bool {
+    matches!(
+        (direction, end),
+        (LaneDirection::AlongReference, CorridorEnd::Start)
+            | (LaneDirection::AgainstReference, CorridorEnd::End)
+    )
+}
+
+const fn lane_exits_at(direction: LaneDirection, end: CorridorEnd) -> bool {
+    matches!(
+        (direction, end),
+        (LaneDirection::AlongReference, CorridorEnd::End)
+            | (LaneDirection::AgainstReference, CorridorEnd::Start)
+    )
+}
+
+fn compile_pedestrian_graph(project: &Project) -> Result<PedestrianGraph, CompileError> {
+    let mut origins: Vec<_> = project
+        .design_catalog()
+        .walking_areas()
+        .iter()
+        .map(|area| PedestrianNodeOrigin::WalkingArea(area.id()))
+        .collect();
+    origins.extend(
+        project
+            .design_catalog()
+            .sidewalks()
+            .iter()
+            .map(|sidewalk| PedestrianNodeOrigin::Sidewalk(sidewalk.id())),
+    );
+    if origins.len() > u32::MAX as usize {
+        return Err(CompileError::new(
+            CompileErrorCode::PedestrianGraphInvariant,
+            Vec::new(),
+        ));
+    }
+    let walking_nodes: BTreeMap<_, _> = origins
+        .iter()
+        .enumerate()
+        .filter_map(|(index, origin)| match origin {
+            PedestrianNodeOrigin::WalkingArea(id) => {
+                Some((*id, CompiledPedestrianNodeId::new(index as u32)))
+            }
+            PedestrianNodeOrigin::Sidewalk(_) => None,
+        })
+        .collect();
+    let mut adjacency = Vec::new();
+    for crossing in project.design_catalog().crossings() {
+        let from = walking_nodes[&crossing.from()];
+        let to = walking_nodes[&crossing.to()];
+        if adjacency.len() > MAX_GRAPH_EDGES.saturating_sub(2) {
+            return Err(CompileError::new(
+                CompileErrorCode::PedestrianGraphInvariant,
+                vec![crossing.id().into()],
+            ));
+        }
+        adjacency.push(PedestrianAdjacency::new(from, to, crossing.id()));
+        adjacency.push(PedestrianAdjacency::new(to, from, crossing.id()));
+    }
+    PedestrianGraph::new(origins, adjacency)
+        .map_err(|_| CompileError::new(CompileErrorCode::PedestrianGraphInvariant, Vec::new()))
+}
+
+fn validate_demand_reachability(
+    project: &Project,
+    lane_origins: &[LaneOrigin],
+    lane_graph: &LaneGraph,
+    pedestrian_graph: &PedestrianGraph,
+) -> Result<(), CompileError> {
+    for profile in project.study_catalog().demand_profiles() {
+        for flow in profile.flows() {
+            let reachable = match (flow.mode(), flow.origin(), flow.destination()) {
+                (
+                    DemandMode::Car | DemandMode::Bus,
+                    DemandEndpoint::Corridor(from),
+                    DemandEndpoint::Corridor(to),
+                ) => corridor_reachable(from, to, lane_origins, lane_graph),
+                (
+                    DemandMode::Pedestrian,
+                    DemandEndpoint::WalkingArea(from),
+                    DemandEndpoint::WalkingArea(to),
+                ) => {
+                    let from = pedestrian_graph
+                        .node_for_walking_area(from)
+                        .expect("StudyCatalog validates walking-area endpoints");
+                    let to = pedestrian_graph
+                        .node_for_walking_area(to)
+                        .expect("StudyCatalog validates walking-area endpoints");
+                    pedestrian_graph.can_reach(from, to)
+                }
+                (DemandMode::Tram, _, _) => {
+                    return Err(CompileError::new(
+                        CompileErrorCode::DemandModeUnsupported,
+                        vec![
+                            flow.id().into(),
+                            flow.origin().object_ref(),
+                            flow.destination().object_ref(),
+                        ],
+                    ));
+                }
+                _ => false,
+            };
+            if !reachable {
+                return Err(CompileError::new(
+                    CompileErrorCode::DemandEndpointUnreachable,
+                    vec![
+                        flow.id().into(),
+                        flow.origin().object_ref(),
+                        flow.destination().object_ref(),
+                    ],
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn corridor_reachable(
+    from: roadsim_types::CorridorId,
+    to: roadsim_types::CorridorId,
+    origins: &[LaneOrigin],
+    graph: &LaneGraph,
+) -> bool {
+    let mut from_lanes = origins.iter().enumerate().filter_map(|(index, origin)| {
+        (origin.corridor_id() == from).then_some(CompiledLaneId::new(index as u32))
+    });
+    let to_lanes: Vec<_> = origins
+        .iter()
+        .enumerate()
+        .filter_map(|(index, origin)| {
+            (origin.corridor_id() == to).then_some(CompiledLaneId::new(index as u32))
+        })
+        .collect();
+    from_lanes.any(|source| {
+        to_lanes
+            .iter()
+            .any(|destination| graph.can_reach(source, *destination))
+    })
+}
+
 fn content_hash(
     project: &Project,
     lanes: &LaneTable,
     origins: &[LaneOrigin],
+    lane_graph: &LaneGraph,
+    pedestrian_graph: &PedestrianGraph,
     requirements: &CapabilityRequirements,
 ) -> Sha256Digest {
     let mut hash = Sha256::new();
@@ -239,6 +462,31 @@ fn content_hash(
         hash.update([lane_use_tag(lane.use_kind())]);
         hash.update(origin.corridor_id().as_uuid().as_bytes());
         hash.update(origin.lane_id().as_uuid().as_bytes());
+    }
+    hash.update((lane_graph.adjacency().len() as u64).to_le_bytes());
+    for edge in lane_graph.adjacency() {
+        hash.update(edge.from().get().to_le_bytes());
+        hash.update(edge.to().get().to_le_bytes());
+        hash.update(edge.junction_id().as_uuid().as_bytes());
+    }
+    hash.update((pedestrian_graph.origins().len() as u64).to_le_bytes());
+    for origin in pedestrian_graph.origins() {
+        match origin {
+            PedestrianNodeOrigin::WalkingArea(id) => {
+                hash.update([0]);
+                hash.update(id.as_uuid().as_bytes());
+            }
+            PedestrianNodeOrigin::Sidewalk(id) => {
+                hash.update([1]);
+                hash.update(id.as_uuid().as_bytes());
+            }
+        }
+    }
+    hash.update((pedestrian_graph.adjacency().len() as u64).to_le_bytes());
+    for edge in pedestrian_graph.adjacency() {
+        hash.update(edge.from().get().to_le_bytes());
+        hash.update(edge.to().get().to_le_bytes());
+        hash.update(edge.crossing_id().as_uuid().as_bytes());
     }
     for capability in requirements.values() {
         hash.update([capability_tag(*capability)]);
@@ -261,5 +509,6 @@ const fn capability_tag(value: CapabilityId) -> u8 {
         CapabilityId::TransitBusLanes => 1,
         CapabilityId::BicycleLanes => 2,
         CapabilityId::ParkingLanes => 3,
+        CapabilityId::PedestrianWalkingAreasBasic => 4,
     }
 }

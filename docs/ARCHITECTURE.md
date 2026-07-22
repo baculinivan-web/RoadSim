@@ -319,12 +319,19 @@ CompiledNetwork
 
 Горячие данные хранятся преимущественно в SoA и индексируются compact IDs. Строки и UUID вынесены из горячих массивов. CSN read-only после создания и передается через `Arc`; mutability существует только в runtime state backend.
 
+Lane adjacency в ранней стадии описывает только directed reachability между
+compact lanes разных corridor через declared junction approaches. Она не
+является turn movement: geometry, priority, U-turn policy и conflicts появляются
+на следующих compiler stages. Pedestrian adjacency хранит source crossing для
+каждого directed link; walking areas и sidewalks сохраняются отдельными node
+origins, даже если пока изолированы.
+
 ### 8.3. Capability requirements
 
 Compiler маркирует необходимые возможности, например:
 
 ```text
-pedestrians.basic
+pedestrian.walking_areas.basic
 transit.bus_stops
 rail.tram.basic
 signals.fixed_time
