@@ -53,6 +53,8 @@ offsets и predicates остаются за собственным API; буду
 - segment predicate различает none/point/overlap, отдельно обрабатывает
   zero-length input и возвращает error при derived overflow вместо panic/NaN;
 - predicate не изменяет координаты и не выполняет snap-rounding автоматически.
+- cubic connector хранит exact control polygon; adaptive tessellation использует
+  explicit chord error, depth и point limits и не становится source of truth.
 
 ## Последствия и ограничения
 
@@ -60,8 +62,8 @@ Kernel не объявляется exact-arithmetic implementation. Для эк�
 координат, где промежуточное `f64` переполняется, операция fail-closed; будущий
 adaptive-exact predicate может заменить внутренность с тем же явным контрактом.
 Точность transition position зависит от выбранного context и поэтому должна быть
-частью compiler/golden policy. Tessellation, spatial index, snapping и automatic
-repair остаются E04-T05…T08.
+частью compiler/golden policy. Reference-line/render-mesh tessellation, spatial
+index, snapping и automatic repair остаются E04-T05…T08.
 
 Новых внешних dependencies нет. `roadsim-geometry` зависит только от domain,
 types и уже закреплённого `libm`; domain не зависит от derived geometry.

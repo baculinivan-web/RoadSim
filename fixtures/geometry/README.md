@@ -23,6 +23,10 @@ segments, zero-length segment и derived overflow. Ожидаемые коорд
 evaluation, а heading/curvature — по точным формулам. Все units локальные метры,
 радианы и `1/m`; внешнего источника и отдельной лицензии нет.
 
+E04-T05 partial fixture там же использует симметричный cubic Bézier с известной
+точкой `t=0.5`, проверяет exact endpoints, увеличение числа derived points при
+ужесточении chord error и явный отказ при исчерпании depth limit.
+
 При добавлении fixture рядом должен быть указан источник, лицензия, units,
 ожидаемый результат и процедура осознанного обновления. Golden output нельзя
 перезаписывать обычным test run.

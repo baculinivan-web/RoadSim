@@ -16,6 +16,8 @@ use std::{
 
 /// Hard resource ceiling independent of caller-selected numerical accuracy.
 pub const MAX_INTEGRATION_PANELS: u32 = 1_000_000;
+pub const MAX_TESSELLATION_DEPTH: u32 = 24;
+pub const MAX_TESSELLATION_POINTS: u32 = 1_000_000;
 
 /// Stable geometry failure classifications.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +31,11 @@ pub enum GeometryErrorCode {
     IntegrationLimitExceeded,
     NonFiniteOffset,
     OffsetSingular,
+    InvalidCurveParameter,
+    InvalidTessellationError,
+    InvalidTessellationDepth,
+    InvalidTessellationPointLimit,
+    TessellationLimitExceeded,
     NonFiniteResult,
 }
 
@@ -45,9 +52,236 @@ impl GeometryErrorCode {
             Self::IntegrationLimitExceeded => "geometry.curve.integration.limit_exceeded",
             Self::NonFiniteOffset => "geometry.offset.non_finite",
             Self::OffsetSingular => "geometry.offset.singular",
+            Self::InvalidCurveParameter => "geometry.curve.parameter.invalid",
+            Self::InvalidTessellationError => "geometry.tessellation.error.invalid",
+            Self::InvalidTessellationDepth => "geometry.tessellation.depth.invalid",
+            Self::InvalidTessellationPointLimit => "geometry.tessellation.points.invalid",
+            Self::TessellationLimitExceeded => "geometry.tessellation.limit_exceeded",
             Self::NonFiniteResult => "geometry.result.non_finite",
         }
     }
+}
+
+/// Exact cubic Bézier control polygon in the local metric coordinate frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CubicBezier2 {
+    start: Point2Meters,
+    control_1: Point2Meters,
+    control_2: Point2Meters,
+    end: Point2Meters,
+}
+
+impl CubicBezier2 {
+    #[must_use]
+    pub const fn new(
+        start: Point2Meters,
+        control_1: Point2Meters,
+        control_2: Point2Meters,
+        end: Point2Meters,
+    ) -> Self {
+        Self {
+            start,
+            control_1,
+            control_2,
+            end,
+        }
+    }
+
+    #[must_use]
+    pub const fn start(self) -> Point2Meters {
+        self.start
+    }
+
+    #[must_use]
+    pub const fn control_1(self) -> Point2Meters {
+        self.control_1
+    }
+
+    #[must_use]
+    pub const fn control_2(self) -> Point2Meters {
+        self.control_2
+    }
+
+    #[must_use]
+    pub const fn end(self) -> Point2Meters {
+        self.end
+    }
+
+    pub fn point_at(self, parameter: f64) -> Result<Point2Meters, GeometryError> {
+        if !parameter.is_finite() || !(0.0..=1.0).contains(&parameter) {
+            return Err(GeometryError::new(GeometryErrorCode::InvalidCurveParameter));
+        }
+        let first = interpolate(
+            coordinates(self.start),
+            coordinates(self.control_1),
+            parameter,
+        )?;
+        let second = interpolate(
+            coordinates(self.control_1),
+            coordinates(self.control_2),
+            parameter,
+        )?;
+        let third = interpolate(
+            coordinates(self.control_2),
+            coordinates(self.end),
+            parameter,
+        )?;
+        let fourth = interpolate(first, second, parameter)?;
+        let fifth = interpolate(second, third, parameter)?;
+        result_point(interpolate(fourth, fifth, parameter)?)
+    }
+}
+
+/// Explicit bounded tessellation policy. The curve control polygon remains the
+/// engineering geometry; returned points are a derived approximation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TessellationOptions {
+    max_chord_error_m: f64,
+    max_depth: u32,
+    max_points: u32,
+}
+
+impl TessellationOptions {
+    pub fn new(
+        max_chord_error_m: f64,
+        max_depth: u32,
+        max_points: u32,
+    ) -> Result<Self, GeometryError> {
+        if !max_chord_error_m.is_finite() || max_chord_error_m <= 0.0 {
+            return Err(GeometryError::new(
+                GeometryErrorCode::InvalidTessellationError,
+            ));
+        }
+        if max_depth == 0 || max_depth > MAX_TESSELLATION_DEPTH {
+            return Err(GeometryError::new(
+                GeometryErrorCode::InvalidTessellationDepth,
+            ));
+        }
+        if !(2..=MAX_TESSELLATION_POINTS).contains(&max_points) {
+            return Err(GeometryError::new(
+                GeometryErrorCode::InvalidTessellationPointLimit,
+            ));
+        }
+        Ok(Self {
+            max_chord_error_m,
+            max_depth,
+            max_points,
+        })
+    }
+
+    #[must_use]
+    pub const fn max_chord_error_m(self) -> f64 {
+        self.max_chord_error_m
+    }
+
+    #[must_use]
+    pub const fn max_depth(self) -> u32 {
+        self.max_depth
+    }
+
+    #[must_use]
+    pub const fn max_points(self) -> u32 {
+        self.max_points
+    }
+}
+
+/// Tessellates a cubic in stable left-to-right order with bounded memory/work.
+pub fn tessellate_cubic(
+    curve: CubicBezier2,
+    options: TessellationOptions,
+    context: GeometryContext,
+) -> Result<Vec<Point2Meters>, GeometryError> {
+    let mut output = Vec::new();
+    output.push(curve.start());
+    let mut pending = vec![(curve, 0_u32)];
+    while let Some((candidate, depth)) = pending.pop() {
+        if cubic_flatness(candidate, context)? <= options.max_chord_error_m() {
+            if output.len() >= options.max_points() as usize {
+                return Err(GeometryError::new(
+                    GeometryErrorCode::TessellationLimitExceeded,
+                ));
+            }
+            output.push(candidate.end());
+            continue;
+        }
+        if depth >= options.max_depth() {
+            return Err(GeometryError::new(
+                GeometryErrorCode::TessellationLimitExceeded,
+            ));
+        }
+        let (left, right) = split_cubic(candidate)?;
+        pending.push((right, depth + 1));
+        pending.push((left, depth + 1));
+    }
+    Ok(output)
+}
+
+fn cubic_flatness(curve: CubicBezier2, context: GeometryContext) -> Result<f64, GeometryError> {
+    let start = coordinates(curve.start());
+    let end = coordinates(curve.end());
+    let chord = checked_pair(subtract(end, start))?;
+    let chord_length = checked_length(chord)?;
+    if chord_length <= context.distance_tolerance_m() {
+        return Ok(checked_length(checked_pair(subtract(
+            coordinates(curve.control_1()),
+            start,
+        ))?)?
+        .max(checked_length(checked_pair(subtract(
+            coordinates(curve.control_2()),
+            start,
+        ))?)?));
+    }
+    let first_distance = checked_scalar(cross(
+        checked_pair(subtract(coordinates(curve.control_1()), start))?,
+        chord,
+    ))?
+    .abs()
+        / chord_length;
+    let second_distance = checked_scalar(cross(
+        checked_pair(subtract(coordinates(curve.control_2()), start))?,
+        chord,
+    ))?
+    .abs()
+        / chord_length;
+    checked_scalar(first_distance.max(second_distance))
+}
+
+fn split_cubic(curve: CubicBezier2) -> Result<(CubicBezier2, CubicBezier2), GeometryError> {
+    let start = coordinates(curve.start());
+    let control_1 = coordinates(curve.control_1());
+    let control_2 = coordinates(curve.control_2());
+    let end = coordinates(curve.end());
+    let first = interpolate(start, control_1, 0.5)?;
+    let second = interpolate(control_1, control_2, 0.5)?;
+    let third = interpolate(control_2, end, 0.5)?;
+    let fourth = interpolate(first, second, 0.5)?;
+    let fifth = interpolate(second, third, 0.5)?;
+    let midpoint = interpolate(fourth, fifth, 0.5)?;
+    Ok((
+        CubicBezier2::new(
+            curve.start(),
+            result_point(first)?,
+            result_point(fourth)?,
+            result_point(midpoint)?,
+        ),
+        CubicBezier2::new(
+            result_point(midpoint)?,
+            result_point(fifth)?,
+            result_point(third)?,
+            curve.end(),
+        ),
+    ))
+}
+
+fn interpolate(
+    start: (f64, f64),
+    end: (f64, f64),
+    parameter: f64,
+) -> Result<(f64, f64), GeometryError> {
+    checked_pair((
+        start.0 * (1.0 - parameter) + end.0 * parameter,
+        start.1 * (1.0 - parameter) + end.1 * parameter,
+    ))
 }
 
 /// A geometry failure with a stable code.

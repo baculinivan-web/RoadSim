@@ -266,7 +266,9 @@ tolerance — в квадратных метрах, parameter tolerance безр
 integration ограничена длиной шага и чётным числом panels. Значений по умолчанию
 и process-global epsilon нет. Line/arc вычисляются аналитически, transition —
 bounded composite Simpson; offset singularity и predicate overflow являются
-явными ошибками. Подробная семантика зафиксирована в ADR-021.
+явными ошибками. Cubic connector хранит exact control polygon, а его tessellation
+получает отдельные chord-error/depth/point limits и остаётся производной.
+Подробная семантика зафиксирована в ADR-021.
 
 Минимальные библиотеки: `glam` для math types, `geo` для общих операций, `rstar` для spatial index. Критичные кривые, offset и topology должны иметь собственный контролируемый слой, чтобы семантика не зависела от смены библиотеки.
 

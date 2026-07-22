@@ -35,6 +35,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   кривой, signed offsets, lane cross-section continuity evidence и
   детерминированной классификацией segment intersections. Derived overflow и
   offset singularity возвращают стабильные ошибки вместо panic или repair.
+- Geometry kernel получил exact cubic Bézier control contract и bounded adaptive
+  tessellation с caller-provided chord error, depth и point limit. Polyline
+  остаётся производной и не заменяет инженерную кривую.
 - Добавлена corridor/cross-section Design Model: corridor-local lane catalog,
   stable lane IDs, semantic direction/use, ordered left/right lane slices и
   piecewise-constant widths по station без meshes или backend IDs.

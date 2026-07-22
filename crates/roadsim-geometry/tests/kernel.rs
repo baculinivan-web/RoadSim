@@ -5,9 +5,9 @@ use roadsim_domain::{
     ReferenceLineElement, ReferenceLinePose,
 };
 use roadsim_geometry::{
-    GeometryContext, GeometryErrorCode, LaneProfileContinuity, Segment2, SegmentIntersection,
-    evaluate_lane_cross_section, evaluate_offset, evaluate_reference_line, lane_profile_boundaries,
-    segment_intersection,
+    CubicBezier2, GeometryContext, GeometryErrorCode, LaneProfileContinuity, Segment2,
+    SegmentIntersection, TessellationOptions, evaluate_lane_cross_section, evaluate_offset,
+    evaluate_reference_line, lane_profile_boundaries, segment_intersection, tessellate_cubic,
 };
 use roadsim_types::{
     CoordinateMeters, CorridorId, CurvaturePerMeter, HeadingRadians, LaneId, LengthMeters,
@@ -270,6 +270,56 @@ fn predicate_overflow_is_an_error_instead_of_a_panic() {
     )
     .unwrap_err();
     assert_eq!(error.code(), GeometryErrorCode::NonFiniteResult);
+}
+
+#[test]
+fn cubic_tessellation_is_bounded_and_preserves_exact_endpoints() {
+    let curve = CubicBezier2::new(
+        point(0.0, 0.0),
+        point(0.0, 10.0),
+        point(10.0, 10.0),
+        point(10.0, 0.0),
+    );
+    let coarse = tessellate_cubic(
+        curve,
+        TessellationOptions::new(1.0, 16, 1_000).unwrap(),
+        context(),
+    )
+    .unwrap();
+    let fine = tessellate_cubic(
+        curve,
+        TessellationOptions::new(0.01, 16, 1_000).unwrap(),
+        context(),
+    )
+    .unwrap();
+    assert_eq!(coarse.first().copied(), Some(curve.start()));
+    assert_eq!(coarse.last().copied(), Some(curve.end()));
+    assert!(fine.len() > coarse.len());
+    assert_eq!(curve.point_at(0.5).unwrap(), point(5.0, 7.5));
+
+    let error = tessellate_cubic(
+        curve,
+        TessellationOptions::new(1.0e-12, 1, 1_000).unwrap(),
+        context(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), GeometryErrorCode::TessellationLimitExceeded);
+}
+
+#[test]
+fn tessellation_policy_rejects_invalid_limits() {
+    assert_eq!(
+        TessellationOptions::new(0.0, 1, 2).unwrap_err().code(),
+        GeometryErrorCode::InvalidTessellationError
+    );
+    assert_eq!(
+        TessellationOptions::new(0.1, 0, 2).unwrap_err().code(),
+        GeometryErrorCode::InvalidTessellationDepth
+    );
+    assert_eq!(
+        TessellationOptions::new(0.1, 1, 1).unwrap_err().code(),
+        GeometryErrorCode::InvalidTessellationPointLimit
+    );
 }
 
 proptest! {

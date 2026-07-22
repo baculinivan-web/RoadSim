@@ -311,6 +311,12 @@ touch, overlap и degenerate input; derived overflow и offset singularity
 units, orientation, station boundaries и order independence. Tessellation,
 spatial index, snapping, fuzz harness и performance baseline остаются T05…T09.
 
+Статус E04-T05: 🟡 geometry API содержит exact cubic Bézier control polygon и
+детерминированную adaptive tessellation с явными chord-error/depth/point limits;
+endpoint preservation, tightening и limit failure покрыты regression tests.
+Reference-line tessellation, zoom-derived renderer policy и cached road meshes
+ещё не реализованы, поэтому полный T05 не заявляется.
+
 ## 13. Epic E05 — Desktop shell и renderer
 
 **Цель:** нативное окно и GPU viewport, не смешивающие UI и доменную истину.
