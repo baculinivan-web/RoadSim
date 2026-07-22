@@ -50,6 +50,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   записывает multi-command transaction как одно history entry.
 - Design Model расширена backend-independent junction approaches, walking areas,
   corridor-attached sidewalks/crossings и rail alignments с typed UUID refs.
+- Traffic control model получил явный `SignalMovementBinding` от signal group к
+  паре stable Design lane IDs. Binding не использует compact CSN/backend IDs,
+  сортируется детерминированно и сохраняется при serde round-trip.
 - Добавлена backend-independent модель знаков, разметки, стоп-линий, сигнальных
   групп/головок, фаз, программ и контроллеров с typed object references и
   проверкой длительностей, intergreen и связей с junction/corridor/lane.

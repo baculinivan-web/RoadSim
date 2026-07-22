@@ -4,8 +4,8 @@ use roadsim_domain::{
     CrossSectionLayout, CrossSectionProfile, CrossSectionSection, DesignCatalog, GroupState,
     Junction, LaneDefinition, LaneDirection, LaneSlice, LaneUse, Point2Meters, ReferenceLine,
     ReferenceLineElement, ReferenceLinePose, RoadMarking, SignalController, SignalGroup,
-    SignalHead, SignalIndication, SignalPhase, SignalProgram, StopLine, TrafficControlCatalog,
-    TrafficSign,
+    SignalHead, SignalIndication, SignalMovementBinding, SignalPhase, SignalProgram, StopLine,
+    TrafficControlCatalog, TrafficSign,
 };
 use roadsim_types::{
     CoordinateMeters, CorridorId, DurationSeconds, HeadingRadians, JunctionId, LaneId,
@@ -136,6 +136,10 @@ fn controls() -> TrafficControlCatalog {
         ],
     )
     .unwrap()
+    .with_signal_movement_bindings(vec![
+        SignalMovementBinding::new(group_id, LaneId::from_u128(20), LaneId::from_u128(21)).unwrap(),
+    ])
+    .unwrap()
 }
 
 #[test]
@@ -149,6 +153,15 @@ fn typical_controls_round_trip_in_deterministic_order() {
     assert_eq!(catalog.traffic_controls().stop_lines().len(), 1);
     assert_eq!(catalog.traffic_controls().signal_heads().len(), 1);
     assert_eq!(
+        catalog.traffic_controls().signal_movement_bindings(),
+        &[SignalMovementBinding::new(
+            SignalGroupId::from_u128(40),
+            LaneId::from_u128(20),
+            LaneId::from_u128(21),
+        )
+        .unwrap()]
+    );
+    assert_eq!(
         catalog.traffic_controls().signal_programs()[0].phases()[0]
             .duration()
             .get(),
@@ -158,6 +171,71 @@ fn typical_controls_round_trip_in_deterministic_order() {
     let encoded = serde_json::to_string(&catalog).unwrap();
     let decoded: DesignCatalog = serde_json::from_str(&encoded).unwrap();
     assert_eq!(decoded, catalog);
+}
+
+#[test]
+fn movement_bindings_are_explicit_sorted_and_revalidated() {
+    let first = SignalMovementBinding::new(
+        SignalGroupId::from_u128(40),
+        LaneId::from_u128(20),
+        LaneId::from_u128(21),
+    )
+    .unwrap();
+    let second = SignalMovementBinding::new(
+        SignalGroupId::from_u128(40),
+        LaneId::from_u128(21),
+        LaneId::from_u128(20),
+    )
+    .unwrap();
+    let catalog = TrafficControlCatalog::new(
+        vec![],
+        vec![],
+        vec![],
+        vec![SignalGroup::new(
+            SignalGroupId::from_u128(40),
+            JunctionId::from_u128(30),
+        )],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap()
+    .with_signal_movement_bindings(vec![second, first])
+    .unwrap();
+    assert_eq!(catalog.signal_movement_bindings(), &[first, second]);
+
+    let duplicate = catalog
+        .clone()
+        .with_signal_movement_bindings(vec![first, first])
+        .unwrap_err();
+    assert_eq!(duplicate.code(), ControlErrorCode::DuplicateReference);
+
+    let self_loop = SignalMovementBinding::new(
+        SignalGroupId::from_u128(40),
+        LaneId::from_u128(20),
+        LaneId::from_u128(20),
+    )
+    .unwrap_err();
+    assert_eq!(self_loop.code(), ControlErrorCode::InvalidMovementBinding);
+    let mut invalid_wire = serde_json::to_value(first).unwrap();
+    invalid_wire["to_lane_id"] = invalid_wire["from_lane_id"].clone();
+    assert!(serde_json::from_value::<SignalMovementBinding>(invalid_wire).is_err());
+
+    let dangling = catalog
+        .with_signal_movement_bindings(vec![
+            SignalMovementBinding::new(
+                SignalGroupId::from_u128(40),
+                LaneId::from_u128(20),
+                LaneId::from_u128(999),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+    let error = multimodal_catalog()
+        .with_traffic_controls(dangling)
+        .unwrap_err();
+    assert_eq!(error.code(), CatalogErrorCode::DanglingLane);
+    assert!(error.object_refs().contains(&LaneId::from_u128(999).into()));
 }
 
 #[test]
@@ -265,6 +343,11 @@ fn aggregate_rejects_dangling_lane_and_cross_junction_signal_group() {
 
 #[test]
 fn deserialization_rechecks_catalog_and_phase_invariants() {
+    let mut legacy = serde_json::to_value(controls()).unwrap();
+    legacy.as_object_mut().unwrap().remove("movement_bindings");
+    let decoded: TrafficControlCatalog = serde_json::from_value(legacy).unwrap();
+    assert!(decoded.signal_movement_bindings().is_empty());
+
     let mut value = serde_json::to_value(controls()).unwrap();
     let duplicate = value["signs"][0].clone();
     value["signs"].as_array_mut().unwrap().push(duplicate);

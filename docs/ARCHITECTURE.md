@@ -352,6 +352,12 @@ areas без пересечения centerlines. Numerical tolerances и resourc
 передаются в compiler явно; priority/yield relations не выводятся из геометрии и
 остаются отдельной стадией.
 
+Signal group управляет движением только через authored
+`SignalMovementBinding(group, from Design lane, to Design lane)`. Signal head
+placement и геометрическая близость не создают такое intent неявно. Compiler
+разрешает stable lane pair в compact movement ID и обязан отклонить отсутствующую
+или конфликтующую связь до backend compile.
+
 ### 8.3. Capability requirements
 
 Compiler маркирует необходимые возможности, например:

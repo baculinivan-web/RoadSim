@@ -41,6 +41,6 @@ pub use scenario::{
 };
 pub use traffic_control::{
     ControlCode, ControlError, ControlErrorCode, GroupState, RoadMarking, SignalController,
-    SignalGroup, SignalHead, SignalIndication, SignalPhase, SignalProgram, StopLine,
-    TrafficControlCatalog, TrafficSign,
+    SignalGroup, SignalHead, SignalIndication, SignalMovementBinding, SignalPhase, SignalProgram,
+    StopLine, TrafficControlCatalog, TrafficSign,
 };

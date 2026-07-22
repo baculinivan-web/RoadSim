@@ -243,6 +243,11 @@ remote, поэтому это evidence пока невозможно получ�
 | E01-T09 | ✅ Готово | Rule configuration/exceptions model | T03 | pins/exceptions | stale hash semantics покрыта тестом |
 | E01-T10 | Не начато | Semantic project hash | T01–T09 | canonical content hashing | UI/cache/order не меняют hash |
 
+E01-T07 дополнен явным backend-independent `SignalMovementBinding`: signal group
+ссылается на semantic movement через пару stable Design lane IDs. Catalog
+проверяет group/lane refs и deterministic serde order; разрешение в compact CSN
+movement и unbound/conflict diagnostics остаются E07-T07.
+
 **Особое review:** геометрические типы и единицы должны быть одобрены до массового появления API. Иначе изменение распространяется на storage, renderer и backend.
 
 ## 10. Epic E02 — Команды, транзакции и варианты

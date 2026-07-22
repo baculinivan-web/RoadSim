@@ -20,6 +20,7 @@ pub enum ControlErrorCode {
     ZeroPhaseDuration,
     PhaseGroupMismatch,
     ActiveProgramMissing,
+    InvalidMovementBinding,
 }
 
 impl ControlErrorCode {
@@ -35,6 +36,7 @@ impl ControlErrorCode {
             Self::ZeroPhaseDuration => "domain.signal.phase.duration.zero",
             Self::PhaseGroupMismatch => "domain.signal.phase.group_mismatch",
             Self::ActiveProgramMissing => "domain.signal.controller.active_program_missing",
+            Self::InvalidMovementBinding => "domain.signal.movement_binding.invalid",
         }
     }
 }
@@ -312,6 +314,66 @@ pub enum SignalIndication {
     Green,
     Amber,
     Dark,
+}
+
+/// Authored semantic movement controlled by one signal group.
+///
+/// Lane IDs remain Design Model IDs; compact movement IDs are assigned only by
+/// the compiler after movement inference.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct SignalMovementBinding {
+    group_id: SignalGroupId,
+    from_lane_id: LaneId,
+    to_lane_id: LaneId,
+}
+
+impl<'de> Deserialize<'de> for SignalMovementBinding {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            group_id: SignalGroupId,
+            from_lane_id: LaneId,
+            to_lane_id: LaneId,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.group_id, wire.from_lane_id, wire.to_lane_id)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl SignalMovementBinding {
+    pub fn new(
+        group_id: SignalGroupId,
+        from_lane_id: LaneId,
+        to_lane_id: LaneId,
+    ) -> Result<Self, ControlError> {
+        if from_lane_id == to_lane_id {
+            return Err(ControlError::new(
+                ControlErrorCode::InvalidMovementBinding,
+                vec![group_id.into(), from_lane_id.into()],
+            ));
+        }
+        Ok(Self {
+            group_id,
+            from_lane_id,
+            to_lane_id,
+        })
+    }
+
+    #[must_use]
+    pub const fn group_id(self) -> SignalGroupId {
+        self.group_id
+    }
+
+    #[must_use]
+    pub const fn from_lane_id(self) -> LaneId {
+        self.from_lane_id
+    }
+
+    #[must_use]
+    pub const fn to_lane_id(self) -> LaneId {
+        self.to_lane_id
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -626,6 +688,7 @@ pub struct TrafficControlCatalog {
     heads: Vec<SignalHead>,
     programs: Vec<SignalProgram>,
     controllers: Vec<SignalController>,
+    movement_bindings: Vec<SignalMovementBinding>,
 }
 
 impl TrafficControlCatalog {
@@ -639,6 +702,7 @@ impl TrafficControlCatalog {
             heads: Vec::new(),
             programs: Vec::new(),
             controllers: Vec::new(),
+            movement_bindings: Vec::new(),
         }
     }
 
@@ -692,7 +756,33 @@ impl TrafficControlCatalog {
             heads,
             programs,
             controllers,
+            movement_bindings: Vec::new(),
         })
+    }
+
+    /// Adds explicit signal-group to movement intent without inferring it from
+    /// signal head placement or geometry.
+    pub fn with_signal_movement_bindings(
+        mut self,
+        mut movement_bindings: Vec<SignalMovementBinding>,
+    ) -> Result<Self, ControlError> {
+        movement_bindings.sort_unstable();
+        if let Some(duplicate) = movement_bindings
+            .windows(2)
+            .find(|pair| pair[0] == pair[1])
+            .map(|pair| pair[0])
+        {
+            return Err(ControlError::new(
+                ControlErrorCode::DuplicateReference,
+                vec![
+                    duplicate.group_id().into(),
+                    duplicate.from_lane_id().into(),
+                    duplicate.to_lane_id().into(),
+                ],
+            ));
+        }
+        self.movement_bindings = movement_bindings;
+        Ok(self)
     }
 
     pub(crate) fn validate_against(&self, design: &DesignCatalog) -> Result<(), CatalogError> {
@@ -819,6 +909,26 @@ impl TrafficControlCatalog {
                 }
             }
         }
+        for binding in &self.movement_bindings {
+            if !group_ids.contains(&binding.group_id()) {
+                return Err(CatalogError::new(
+                    CatalogErrorCode::DanglingSignalGroup,
+                    vec![binding.group_id().into()],
+                ));
+            }
+            for lane_id in [binding.from_lane_id(), binding.to_lane_id()] {
+                if !design
+                    .corridors()
+                    .iter()
+                    .any(|corridor| corridor.lane(lane_id).is_some())
+                {
+                    return Err(CatalogError::new(
+                        CatalogErrorCode::DanglingLane,
+                        vec![binding.group_id().into(), lane_id.into()],
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -850,6 +960,10 @@ impl TrafficControlCatalog {
     pub fn controllers(&self) -> &[SignalController] {
         &self.controllers
     }
+    #[must_use]
+    pub fn signal_movement_bindings(&self) -> &[SignalMovementBinding] {
+        &self.movement_bindings
+    }
 
     fn group(&self, id: SignalGroupId) -> Option<&SignalGroup> {
         self.groups
@@ -877,6 +991,8 @@ impl<'de> Deserialize<'de> for TrafficControlCatalog {
             heads: Vec<SignalHead>,
             programs: Vec<SignalProgram>,
             controllers: Vec<SignalController>,
+            #[serde(default)]
+            movement_bindings: Vec<SignalMovementBinding>,
         }
         let wire = Wire::deserialize(deserializer)?;
         Self::new(
@@ -888,6 +1004,7 @@ impl<'de> Deserialize<'de> for TrafficControlCatalog {
             wire.programs,
             wire.controllers,
         )
+        .and_then(|catalog| catalog.with_signal_movement_bindings(wire.movement_bindings))
         .map_err(serde::de::Error::custom)
     }
 }
