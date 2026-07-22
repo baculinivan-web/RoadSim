@@ -9,6 +9,7 @@ members = [
     "crates/roadsim-compiled-network",
     "crates/roadsim-compiler",
     "crates/roadsim-domain",
+    "crates/roadsim-geometry",
     "crates/roadsim-types",
     "crates/roadsim-worker-client",
     "crates/roadsim-worker-protocol",

@@ -44,6 +44,7 @@
 | ADR-018 | Worker control — bounded JSON frames по inherited pipes | proposed |
 | ADR-019 | Worker data — отдельный bounded batch pipe и loss policy | proposed |
 | ADR-020 | libsumo — versioned native C ABI только внутри SUMO worker | proposed |
+| ADR-021 | Geometry evaluation использует explicit context и bounded algorithms | принято |
 
 Новые решения оформляются отдельными ADR в `docs/adr/NNNN-title.md`: context, options, decision, consequences, migration.
 
@@ -258,6 +259,14 @@ Variant должен быть определен как immutable base revision 
 - tolerance задается контекстом операции, не глобальной магической константой;
 - robust predicates и snap rounding применяются в топологических операциях;
 - любой автоматический repair возвращает список изменений и evidence.
+
+`roadsim-geometry` принимает отдельный `GeometryContext`, который caller строит
+для масштаба и операции: distance tolerance задаётся в метрах, orientation
+tolerance — в квадратных метрах, parameter tolerance безразмерен, а numerical
+integration ограничена длиной шага и чётным числом panels. Значений по умолчанию
+и process-global epsilon нет. Line/arc вычисляются аналитически, transition —
+bounded composite Simpson; offset singularity и predicate overflow являются
+явными ошибками. Подробная семантика зафиксирована в ADR-021.
 
 Минимальные библиотеки: `glam` для math types, `geo` для общих операций, `rstar` для spatial index. Критичные кривые, offset и topology должны иметь собственный контролируемый слой, чтобы семантика не зависела от смены библиотеки.
 
@@ -866,8 +875,6 @@ CSN и metrics должны быть пригодны обоим backend. Backen
 - ADR-Q02: wire schema — Protobuf vs иной schema-first формат;
 - ADR-Q03: cross-platform local IPC abstraction;
 - ADR-Q04: JSON canonicalization и extension preservation;
-- ADR-Q05: остальные geometry algorithms/tolerances после частичного решения
-  authoring contract в ADR-016;
 - ADR-Q06: policy распределения SUMO и EPL-2.0 по платформам;
 - ADR-Q07: формат ruleset artifact и подпись;
 - ADR-Q08: egui docking library или собственная раскладка;

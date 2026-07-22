@@ -1,0 +1,29 @@
+{
+  "packages": [
+    {
+      "id": "path+file:///fixture/roadsim-geometry#0.1.0",
+      "name": "roadsim-geometry"
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wgpu@27.0.1",
+      "name": "wgpu"
+    }
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "path+file:///fixture/roadsim-geometry#0.1.0",
+        "deps": [
+          {
+            "name": "wgpu",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#wgpu@27.0.1"
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#wgpu@27.0.1",
+        "deps": []
+      }
+    ]
+  }
+}

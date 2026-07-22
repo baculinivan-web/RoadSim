@@ -30,6 +30,11 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Добавлен backend-independent reference-line contract для line, signed-curvature
   arc и linear-curvature transition с canonical heading, производными station
   ranges и явной классификацией boundary continuity.
+- Добавлен `roadsim-geometry` с caller-owned tolerance/integration context,
+  аналитической evaluation line/arc, bounded Simpson evaluation переходной
+  кривой, signed offsets, lane cross-section continuity evidence и
+  детерминированной классификацией segment intersections. Derived overflow и
+  offset singularity возвращают стабильные ошибки вместо panic или repair.
 - Добавлена corridor/cross-section Design Model: corridor-local lane catalog,
   stable lane IDs, semantic direction/use, ordered left/right lane slices и
   piecewise-constant widths по station без meshes или backend IDs.

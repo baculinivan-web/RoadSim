@@ -44,6 +44,13 @@ class DependencyGraphGuardTests(unittest.TestCase):
         self.assertIn("roadsim-domain -> roadsim-helper -> roadsim-editor-ui", result.stderr)
         self.assertIn("domain-is-independent", result.stderr)
 
+    def test_geometry_to_gpu_regression_is_rejected(self) -> None:
+        result = self.run_guard("forbidden-geometry-gpu.json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ARCH-FORBIDDEN-DEPENDENCY", result.stderr)
+        self.assertIn("roadsim-geometry -> wgpu", result.stderr)
+        self.assertIn("geometry-is-derived-core-only", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -302,6 +302,15 @@ property test восстановления semantic project реализован
 | E04-T08 | Geometry fuzz/property suite | T02–T07 | corpus/fuzz targets | no panic/NaN/unbounded allocation |
 | E04-T09 | Performance baseline | T03–T06 | Criterion benches | типовая сеть имеет recorded baseline |
 
+Статус E04-T01…T04: 🟢 `roadsim-geometry` требует caller-owned context без
+global epsilon, аналитически вычисляет line/arc и bounded composite-Simpson
+transition, строит signed offsets/lane cross-sections и явно классифицирует
+profile discontinuities. Segment predicates детерминированно различают crossing,
+touch, overlap и degenerate input; derived overflow и offset singularity
+возвращают стабильные коды. Аналитические regression/property fixtures покрывают
+units, orientation, station boundaries и order independence. Tessellation,
+spatial index, snapping, fuzz harness и performance baseline остаются T05…T09.
+
 ## 13. Epic E05 — Desktop shell и renderer
 
 **Цель:** нативное окно и GPU viewport, не смешивающие UI и доменную истину.

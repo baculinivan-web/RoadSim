@@ -34,6 +34,27 @@ to = [
 rationale = "ARCHITECTURE §4: compiled-network must not depend on mutable Design Model types or a backend implementation"
 
 [[rules]]
+id = "geometry-is-derived-core-only"
+from = ["roadsim-geometry"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-*",
+    "roadsim-commands",
+    "roadsim-compiled-network",
+    "roadsim-compiler",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "roadsim-storage",
+    "sumo-worker",
+    "tokio",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4/§7.3 and ADR-021: derived geometry may depend on Design contracts and core math, never UI, GPU, backend, storage, commands, or higher compiler layers"
+
+[[rules]]
 id = "compiler-is-ui-and-backend-independent"
 from = ["roadsim-compiler"]
 to = [

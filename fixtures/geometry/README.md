@@ -15,6 +15,14 @@ monotonic station profiles в `crates/roadsim-domain/tests/corridor.rs`. Пос�
 widths заданы в метрах; serialized fixture появится только вместе с versioned
 project schema E03.
 
+E04-T01…T04 используют legally shareable analytic fixtures в
+`crates/roadsim-geometry/tests/kernel.rs`: прямая, четверть окружности, линейное
+изменение кривизны, signed offset, piecewise lane profile, crossing/touch/overlap
+segments, zero-length segment и derived overflow. Ожидаемые координаты выводятся
+из аналитических формул; transition position проверяется на finite bounded
+evaluation, а heading/curvature — по точным формулам. Все units локальные метры,
+радианы и `1/m`; внешнего источника и отдельной лицензии нет.
+
 При добавлении fixture рядом должен быть указан источник, лицензия, units,
 ожидаемый результат и процедура осознанного обновления. Golden output нельзя
 перезаписывать обычным test run.
