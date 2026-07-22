@@ -11,12 +11,19 @@ use roadsim_worker_client::{
     WorkerClientErrorCode,
 };
 use roadsim_worker_protocol::{
-    AuthToken, EngineIdentity, WorkerDiagnosticCode, WorkerSessionConfig,
+    AuthToken, EngineIdentity, VisualFrameBatch, WorkerDiagnosticCode, WorkerSessionConfig,
 };
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{
+    path::PathBuf,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 const TIMEOUT: Duration = Duration::from_secs(2);
 const REAL_LIBSUMO_TIMEOUT: Duration = Duration::from_secs(10);
+const LIFECYCLE_CAPABILITY: &str = "simulation.lifecycle.step.v1";
+const VEHICLE_VISUAL_CAPABILITY: &str = "simulation.visual.vehicle.v1";
 
 fn token() -> AuthToken {
     AuthToken::parse("a".repeat(64)).unwrap()
@@ -76,7 +83,10 @@ fn bridge_abi_runs_start_step_close_and_isolates_native_crash() {
     let mut client = spawn_with_bridge(&bridge, "b");
     client
         .handshake_with_engine(
-            vec!["simulation.lifecycle.step.v1".to_owned()],
+            vec![
+                LIFECYCLE_CAPABILITY.to_owned(),
+                VEHICLE_VISUAL_CAPABILITY.to_owned(),
+            ],
             exact_engine(),
             TIMEOUT,
         )
@@ -84,9 +94,37 @@ fn bridge_abi_runs_start_step_close_and_isolates_native_crash() {
     let config = WorkerSessionConfig::new("bundle/run.sumocfg", 7, 100).unwrap();
     client.open_session(1, config, TIMEOUT).unwrap();
     assert_eq!(client.step_session(1, 3, TIMEOUT).unwrap(), 3);
+    let (session_id, _, frame) = wait_for_visual(&client, TIMEOUT);
+    assert_eq!(session_id, 1);
+    assert_eq!(frame.tick(), 3);
+    assert_eq!(frame.agent_ids(), &[7, 42]);
+    assert_eq!(frame.length_m(), &[4.5, 12.0]);
+    assert_eq!(frame.width_m(), &[1.8, 2.5]);
     assert_eq!(client.step_session(1, 2, TIMEOUT).unwrap(), 5);
+    let (_, _, frame) = wait_for_visual(&client, TIMEOUT);
+    assert_eq!(frame.tick(), 5);
+    assert_eq!(frame.x_m(), &[5.0, 15.0]);
     client.close_session(1, TIMEOUT).unwrap();
     client.shutdown(TIMEOUT).unwrap();
+
+    let mut invalid = spawn_with_bridge(&bridge, "d");
+    invalid
+        .handshake_with_engine(
+            vec![VEHICLE_VISUAL_CAPABILITY.to_owned()],
+            exact_engine(),
+            TIMEOUT,
+        )
+        .unwrap();
+    let config = WorkerSessionConfig::new("bundle/invalid-frame.sumocfg", 7, 100).unwrap();
+    invalid.open_session(3, config, TIMEOUT).unwrap();
+    let error = invalid.step_session(3, 1, TIMEOUT).unwrap_err();
+    assert_eq!(error.code(), WorkerClientErrorCode::WorkerRejected);
+    assert_eq!(
+        error.worker_diagnostic(),
+        Some(WorkerDiagnosticCode::EngineStepFailed)
+    );
+    invalid.close_session(3, TIMEOUT).unwrap();
+    invalid.shutdown(TIMEOUT).unwrap();
 
     let mut crashing = spawn_with_bridge(&bridge, "c");
     crashing
@@ -152,17 +190,33 @@ fn real_libsumo_runs_minimal_start_step_close() {
     .unwrap();
     let hello = client
         .handshake_with_engine(
-            vec!["simulation.lifecycle.step.v1".to_owned()],
+            vec![
+                LIFECYCLE_CAPABILITY.to_owned(),
+                VEHICLE_VISUAL_CAPABILITY.to_owned(),
+            ],
             exact_engine(),
             REAL_LIBSUMO_TIMEOUT,
         )
         .unwrap();
     assert_eq!(hello.engine, exact_engine());
+    assert!(
+        hello
+            .capabilities
+            .contains(&VEHICLE_VISUAL_CAPABILITY.to_owned())
+    );
     let config = WorkerSessionConfig::new("minimal.sumocfg", 7, 100).unwrap();
     client
         .open_session(91, config, REAL_LIBSUMO_TIMEOUT)
         .unwrap();
     assert_eq!(client.step_session(91, 5, REAL_LIBSUMO_TIMEOUT).unwrap(), 5);
+    let (session_id, _, frame) = wait_for_visual(&client, REAL_LIBSUMO_TIMEOUT);
+    assert_eq!(session_id, 91);
+    assert_eq!(frame.tick(), 5);
+    assert_eq!(frame.agent_ids(), &[0]);
+    assert_eq!(frame.length_m(), &[4.5]);
+    assert_eq!(frame.width_m(), &[1.8]);
+    assert!((2.0..4.0).contains(&frame.x_m()[0]));
+    assert!(frame.heading_rad()[0].abs() < 1.0e-9);
     client.close_session(91, REAL_LIBSUMO_TIMEOUT).unwrap();
     client.shutdown(REAL_LIBSUMO_TIMEOUT).unwrap();
     run.mark_completed().unwrap();
@@ -240,7 +294,10 @@ fn real_libsumo_runs_exported_straight_csn() {
     .unwrap();
     client
         .handshake_with_engine(
-            vec!["simulation.lifecycle.step.v1".to_owned()],
+            vec![
+                LIFECYCLE_CAPABILITY.to_owned(),
+                VEHICLE_VISUAL_CAPABILITY.to_owned(),
+            ],
             exact_engine(),
             REAL_LIBSUMO_TIMEOUT,
         )
@@ -250,6 +307,10 @@ fn real_libsumo_runs_exported_straight_csn() {
         .open_session(92, config, REAL_LIBSUMO_TIMEOUT)
         .unwrap();
     assert_eq!(client.step_session(92, 5, REAL_LIBSUMO_TIMEOUT).unwrap(), 5);
+    let (session_id, _, frame) = wait_for_visual(&client, REAL_LIBSUMO_TIMEOUT);
+    assert_eq!(session_id, 92);
+    assert_eq!(frame.tick(), 5);
+    assert!(frame.is_empty());
     client.close_session(92, REAL_LIBSUMO_TIMEOUT).unwrap();
     client.shutdown(REAL_LIBSUMO_TIMEOUT).unwrap();
     run.mark_completed().unwrap();
@@ -273,7 +334,7 @@ fn spawn_with_bridge(bridge: &PathBuf, token_character: &str) -> WorkerClient {
 
 #[cfg(unix)]
 fn compile_fixture(output: &PathBuf) {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bridge_v1.c");
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bridge_v2.c");
     let mut command = Command::new("cc");
     if cfg!(target_os = "macos") {
         command.arg("-dynamiclib");
@@ -282,6 +343,18 @@ fn compile_fixture(output: &PathBuf) {
     }
     let status = command.arg(source).arg("-o").arg(output).status().unwrap();
     assert!(status.success());
+}
+
+fn wait_for_visual(client: &WorkerClient, timeout: Duration) -> (u64, u64, VisualFrameBatch) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(frame) = client.take_latest_visual_frame() {
+            return frame;
+        }
+        assert_eq!(client.data_stream_error(), None);
+        assert!(Instant::now() < deadline, "visual frame timed out");
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn copy_minimal_fixture(destination: &std::path::Path) {

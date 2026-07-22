@@ -46,7 +46,7 @@ identity при handshake; несовпадение блокирует session �
 `worker.engine.identity_mismatch`. Accepted response повторно сверяется client,
 поэтому worker не может молча принять другой engine build.
 
-`sumo-worker` загружает versioned native bridge только внутри отдельного process.
+`sumo-worker` загружает versioned native bridge ABI v2 только внутри отдельного process.
 C++ bridge получает runtime version через libsumo API, сопоставляет её с
 `eclipse.sumo/1.27.1`, публикует exact source commit как build revision и только
 затем разрешает handshake. Version/build identity затем записывается в run
@@ -55,6 +55,8 @@ manifest E13-T02. Явные protocol commands `OpenSession`, `StepSession` и
 
 Protocol v1/v2 schemas сохранены как исторические wire contracts, но runtime не
 выполняет downgrade: текущая версия 3 обязательна для обеих control/data pipes.
+Native ABI version независима от worker protocol: ABI v1 не содержит batch
+collector и поэтому отклоняется, а protocol остаётся v3.
 
 Native build выполняется отдельно от Cargo:
 
@@ -82,7 +84,8 @@ cargo +1.88.0 test -p sumo-worker --test lifecycle \
 
 Этот test успешно выполнен на macOS arm64 против headless libsumo, собранного
 из exact commit `7717f2379d9e314a0c81c5cec748444de06a2a91`. Он закрывает
-core lifecycle E10-T02. Второй выбранный test materializes typed
+core lifecycle E10-T02 и проверяет frame для `rs_agent_0` с footprint
+4,5 × 1,8 м. Второй выбранный test materializes typed
 `roadsim-backend-sumo` straight-network export, проверяет source mapping и
 запускает его тем же worker, закрывая E10-T03 road/lane scope. Эти tests не
 являются clean-machine/package evidence для Windows, macOS x64 и Linux;

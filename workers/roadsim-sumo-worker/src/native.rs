@@ -1,6 +1,6 @@
 //! Narrow dynamic C ABI around C++ libsumo.
 //!
-//! Safety: the loaded library is accepted only when it exports ABI version 1.
+//! Safety: the loaded library is accepted only when it exports ABI version 2.
 //! Function pointers are copied while `Library` is retained for the whole engine
 //! lifetime. Every pointer argument refers to a live bounded buffer for the full
 //! call, and returned text is copied before another native call can mutate it.
@@ -8,20 +8,35 @@
 #![allow(unsafe_code)]
 
 use libloading::Library;
-use roadsim_worker_protocol::{EngineIdentity, MAX_STEPS_PER_REQUEST};
+use roadsim_worker_protocol::{
+    EngineIdentity, MAX_STEPS_PER_REQUEST, MAX_VISUAL_AGENTS_PER_BATCH, VisualFrameBatch,
+};
 use std::{
     ffi::{CStr, CString, c_char},
     path::Path,
 };
 
-const BRIDGE_ABI_VERSION: u32 = 1;
+const BRIDGE_ABI_VERSION: u32 = 2;
 const TEXT_CAPACITY: usize = 512;
 
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
 type TextFn = unsafe extern "C" fn(*mut c_char, usize) -> i32;
 type StartFn = unsafe extern "C" fn(*const c_char, u64, u32, *mut c_char, usize) -> i32;
 type StepFn = unsafe extern "C" fn(u32, *mut u64, *mut c_char, usize) -> i32;
+type CollectVehiclesFn =
+    unsafe extern "C" fn(*mut NativeVehicleState, usize, *mut usize, *mut c_char, usize) -> i32;
 type CloseFn = unsafe extern "C" fn(*mut c_char, usize) -> i32;
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+struct NativeVehicleState {
+    agent_id: u32,
+    x_m: f64,
+    y_m: f64,
+    heading_rad: f64,
+    length_m: f64,
+    width_m: f64,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeErrorCode {
@@ -30,6 +45,7 @@ pub enum NativeErrorCode {
     IdentityInvalid,
     StartFailed,
     StepFailed,
+    CollectFailed,
     CloseFailed,
 }
 
@@ -39,6 +55,7 @@ pub struct NativeEngine {
     revision: TextFn,
     start: StartFn,
     step: StepFn,
+    collect_vehicles: CollectVehiclesFn,
     close: CloseFn,
     active: bool,
 }
@@ -68,6 +85,9 @@ impl NativeEngine {
             let step = *library
                 .get::<StepFn>(b"roadsim_sumo_step\0")
                 .map_err(|_| NativeErrorCode::LoadFailed)?;
+            let collect_vehicles = *library
+                .get::<CollectVehiclesFn>(b"roadsim_sumo_collect_vehicles\0")
+                .map_err(|_| NativeErrorCode::LoadFailed)?;
             let close = *library
                 .get::<CloseFn>(b"roadsim_sumo_close\0")
                 .map_err(|_| NativeErrorCode::LoadFailed)?;
@@ -77,6 +97,7 @@ impl NativeEngine {
                 revision,
                 start,
                 step,
+                collect_vehicles,
                 close,
                 active: false,
             })
@@ -138,6 +159,54 @@ impl NativeEngine {
         Ok(tick)
     }
 
+    pub fn collect_vehicle_frame(&self, tick: u64) -> Result<VisualFrameBatch, NativeErrorCode> {
+        let mut count = 0_usize;
+        let mut error = [0_u8; TEXT_CAPACITY];
+        // SAFETY: a null output with zero capacity is the ABI's bounded size
+        // query. `count` and `error` remain writable for the full call.
+        let result = unsafe {
+            (self.collect_vehicles)(
+                std::ptr::null_mut(),
+                0,
+                &mut count,
+                error.as_mut_ptr().cast::<c_char>(),
+                error.len(),
+            )
+        };
+        if result != 0 || count > MAX_VISUAL_AGENTS_PER_BATCH {
+            return Err(NativeErrorCode::CollectFailed);
+        }
+        let mut states = vec![NativeVehicleState::default(); count];
+        if count != 0 {
+            let mut written = 0_usize;
+            // SAFETY: `states` owns `count` initialized C-compatible entries;
+            // the bridge may write at most the provided capacity and retains no
+            // pointers after returning.
+            let result = unsafe {
+                (self.collect_vehicles)(
+                    states.as_mut_ptr(),
+                    states.len(),
+                    &mut written,
+                    error.as_mut_ptr().cast::<c_char>(),
+                    error.len(),
+                )
+            };
+            if result != 0 || written != states.len() {
+                return Err(NativeErrorCode::CollectFailed);
+            }
+        }
+        VisualFrameBatch::new(
+            tick,
+            states.iter().map(|state| state.agent_id).collect(),
+            states.iter().map(|state| state.x_m).collect(),
+            states.iter().map(|state| state.y_m).collect(),
+            states.iter().map(|state| state.heading_rad).collect(),
+            states.iter().map(|state| state.length_m).collect(),
+            states.iter().map(|state| state.width_m).collect(),
+        )
+        .map_err(|_| NativeErrorCode::CollectFailed)
+    }
+
     pub fn close(&mut self) -> Result<(), NativeErrorCode> {
         let mut error = [0_u8; TEXT_CAPACITY];
         // SAFETY: error is a valid bounded writable buffer for this call.
@@ -180,5 +249,11 @@ mod tests {
     fn missing_bridge_fails_without_exposing_a_native_handle() {
         let result = NativeEngine::load(Path::new("definitely-missing-roadsim-bridge"));
         assert!(matches!(result, Err(NativeErrorCode::LoadFailed)));
+    }
+
+    #[test]
+    fn vehicle_state_abi_layout_is_stable() {
+        assert_eq!(std::mem::size_of::<NativeVehicleState>(), 48);
+        assert_eq!(std::mem::align_of::<NativeVehicleState>(), 8);
     }
 }

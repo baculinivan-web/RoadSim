@@ -37,9 +37,14 @@ handshake. Цена — отдельный native build и один изолир
 Выбран третий вариант:
 
 - `sumo-worker` — отдельный process и единственный владелец одной active session;
-- bridge ABI v1 экспортирует только version/revision/start/step/close;
+- bridge ABI v2 экспортирует version/revision/start/step/close и один bounded
+  vehicle-state batch collector; ABI v1 worker отклоняет до handshake;
 - `bundle_path` остаётся нормализованным relative path внутри run workdir;
 - C++ exceptions не пересекают ABI, наружу возвращается bounded status;
+- runtime vehicle ID обязан иметь форму `rs_agent_<u32>`; неизвестные и
+  дублирующиеся IDs блокируют collection вместо неустойчивого string hashing;
+- collector сортирует compact IDs, переводит SUMO front-position в центр
+  footprint и navigation degrees в mathematical radians local CRS;
 - worker публикует stable diagnostic phase и не передаёт native error string в UI;
 - `libloading` находится только в `sumo-worker::native`; library handle живёт
   дольше всех скопированных function pointers;
@@ -60,11 +65,12 @@ normal components до native call. Shell interpolation и network listener
 
 ## Проверка и ограничения
 
-- ABI fixture доказывает exact identity, start/ordered steps/close и native abort
-  isolation на Unix;
+- ABI fixture доказывает exact identity, start/ordered steps, двухагентный SoA
+  batch, close и native abort isolation на Unix;
 - missing bridge даёт `worker.engine.unavailable` до открытия session;
 - C++ production bridge вызывает `Simulation::getVersion/start/step/close` и
-  сравнивает runtime version с build pin;
+  vehicle getters, сравнивает runtime version с build pin и не выполняет
+  per-agent IPC;
 - fixture не является доказательством запуска SUMO. Exact `1.27.1` headless
   bridge build и scenario smoke обязательны до завершения E10-T02;
 - Windows ABI fixture и clean-machine native artifacts относятся к E10-T11.

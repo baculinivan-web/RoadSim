@@ -89,6 +89,11 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   deterministic plain XML, lossless CSN/Design→SUMO lane mapping и object-linked
   rejection неподдерживаемых lane uses. Export проходит exact `netconvert` и
   реальный пятишаговый worker/libsumo smoke.
+- SUMO worker теперь после каждого `StepSession` собирает vehicle state одним
+  bounded native batch и публикует protocol-v3 SoA visual frame на отдельном
+  data pipe. SUMO front-position преобразуется в центр footprint, navigation
+  angle — в математический heading; runtime IDs принимаются только в форме
+  `rs_agent_<u32>`.
 - CSN расширена compact directed lane/pedestrian graphs с source mapping до
   junction approaches, walking areas, sidewalks и crossings. Compiler проверяет
   car/bus/pedestrian demand reachability до backend и возвращает object-linked
@@ -107,6 +112,9 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Worker protocol повышен до v3 с backend-neutral relative bundle config и
   отдельными `OpenSession`, `StepSession`, `CloseSession`; `Ping` остаётся только
   health check. V1/v2 schemas неизменяемо сохранены, downgrade отсутствует.
+- Внутренний native SUMO bridge ABI повышен с v1 до v2 добавлением bounded
+  vehicle batch collector. Worker намеренно отклоняет ABI v1 до handshake;
+  worker control/data protocol остаётся v3 и migration не требует.
 
 ### Fixed
 

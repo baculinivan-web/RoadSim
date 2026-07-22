@@ -4,12 +4,112 @@ mod pin;
 use native::{NativeEngine, NativeErrorCode};
 use roadsim_worker_protocol::{
     AuthToken, MAX_STEPS_PER_REQUEST, RequestEnvelope, RequestPayload, ResponseEnvelope,
-    ResponsePayload, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDiagnosticCode,
-    capabilities_are_valid, read_frame, write_frame,
+    ResponsePayload, WORKER_PROTOCOL_VERSION, WORKER_TOKEN_ENV, WorkerDataEnvelope,
+    WorkerDataPayload, WorkerDiagnosticCode, capabilities_are_valid, read_frame, write_data_frame,
+    write_frame,
 };
-use std::{env, ffi::OsStr, io, path::PathBuf, process::ExitCode};
+use std::{
+    env,
+    ffi::OsStr,
+    io,
+    path::PathBuf,
+    process::ExitCode,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::{self, JoinHandle},
+};
 
 const LIFECYCLE_CAPABILITY: &str = "simulation.lifecycle.step.v1";
+const VEHICLE_VISUAL_CAPABILITY: &str = "simulation.visual.vehicle.v1";
+
+#[derive(Default)]
+struct VisualWriterState {
+    pending: Option<WorkerDataEnvelope>,
+    closing: bool,
+}
+
+struct VisualDataWriter {
+    shared: Arc<(Mutex<VisualWriterState>, Condvar)>,
+    failed: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+    next_sequence: u64,
+}
+
+impl VisualDataWriter {
+    fn spawn() -> Self {
+        let shared = Arc::new((Mutex::new(VisualWriterState::default()), Condvar::new()));
+        let failed = Arc::new(AtomicBool::new(false));
+        let thread_shared = Arc::clone(&shared);
+        let thread_failed = Arc::clone(&failed);
+        let thread = thread::spawn(move || {
+            let stderr = io::stderr();
+            let mut writer = stderr.lock();
+            loop {
+                let envelope = {
+                    let (state_lock, ready) = &*thread_shared;
+                    let mut state = state_lock
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while state.pending.is_none() && !state.closing {
+                        state = ready
+                            .wait(state)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    match state.pending.take() {
+                        Some(envelope) => envelope,
+                        None => break,
+                    }
+                };
+                if write_data_frame(&mut writer, &envelope).is_err() {
+                    thread_failed.store(true, Ordering::Release);
+                    break;
+                }
+            }
+        });
+        Self {
+            shared,
+            failed,
+            thread: Some(thread),
+            next_sequence: 1,
+        }
+    }
+
+    fn publish(&mut self, session_id: u64, payload: WorkerDataPayload) -> bool {
+        if self.failed.load(Ordering::Acquire) {
+            return false;
+        }
+        let envelope = WorkerDataEnvelope::new(session_id, self.next_sequence, payload);
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        let (state_lock, ready) = &*self.shared;
+        let mut state = state_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closing {
+            return false;
+        }
+        state.pending = Some(envelope);
+        ready.notify_one();
+        true
+    }
+}
+
+impl Drop for VisualDataWriter {
+    fn drop(&mut self) {
+        let (state_lock, ready) = &*self.shared;
+        {
+            let mut state = state_lock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.closing = true;
+            ready.notify_one();
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
@@ -42,6 +142,7 @@ fn run(expected_token: AuthToken, mut engine: Result<NativeEngine, NativeErrorCo
     let mut handshake_complete = false;
     let mut last_sequence = None;
     let mut active_session = None;
+    let mut data_writer = VisualDataWriter::spawn();
 
     loop {
         let request: RequestEnvelope = match read_frame(&mut reader) {
@@ -176,7 +277,9 @@ fn run(expected_token: AuthToken, mut engine: Result<NativeEngine, NativeErrorCo
             required_capabilities.dedup();
             let unsupported = required_capabilities
                 .into_iter()
-                .filter(|capability| capability != LIFECYCLE_CAPABILITY)
+                .filter(|capability| {
+                    capability != LIFECYCLE_CAPABILITY && capability != VEHICLE_VISUAL_CAPABILITY
+                })
                 .collect::<Vec<_>>();
             if !unsupported.is_empty() {
                 if respond_error(
@@ -200,7 +303,10 @@ fn run(expected_token: AuthToken, mut engine: Result<NativeEngine, NativeErrorCo
                         worker_name: "sumo-worker".to_owned(),
                         worker_version: env!("CARGO_PKG_VERSION").to_owned(),
                         engine: identity,
-                        capabilities: vec![LIFECYCLE_CAPABILITY.to_owned()],
+                        capabilities: vec![
+                            LIFECYCLE_CAPABILITY.to_owned(),
+                            VEHICLE_VISUAL_CAPABILITY.to_owned(),
+                        ],
                     },
                 ),
             )
@@ -311,6 +417,32 @@ fn run(expected_token: AuthToken, mut engine: Result<NativeEngine, NativeErrorCo
                         continue;
                     }
                 };
+                let frame = match loaded_engine.collect_vehicle_frame(tick) {
+                    Ok(frame) => frame,
+                    Err(_) => {
+                        if !respond_and_continue(
+                            &mut writer,
+                            &request,
+                            WorkerDiagnosticCode::EngineStepFailed,
+                        ) {
+                            return ExitCode::from(74);
+                        }
+                        continue;
+                    }
+                };
+                if !data_writer.publish(
+                    session_id(request.session_id),
+                    WorkerDataPayload::VisualFrame(frame),
+                ) {
+                    if !respond_and_continue(
+                        &mut writer,
+                        &request,
+                        WorkerDiagnosticCode::EngineStepFailed,
+                    ) {
+                        return ExitCode::from(74);
+                    }
+                    continue;
+                }
                 ResponsePayload::SessionStepped { tick }
             }
             RequestPayload::CloseSession | RequestPayload::CancelSession => {
@@ -375,6 +507,10 @@ fn run(expected_token: AuthToken, mut engine: Result<NativeEngine, NativeErrorCo
             return ExitCode::SUCCESS;
         }
     }
+}
+
+fn session_id(session_id: Option<u64>) -> u64 {
+    session_id.expect("session shape validated before dispatch")
 }
 
 fn session_shape_is_valid(request: &RequestEnvelope) -> bool {

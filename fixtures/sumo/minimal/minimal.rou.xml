@@ -2,5 +2,5 @@
 <routes>
     <vType id="car" vClass="passenger" length="4.5" width="1.8" maxSpeed="13.89"/>
     <route id="straight" edges="road"/>
-    <vehicle id="vehicle-0" type="car" route="straight" depart="0" departSpeed="0"/>
+    <vehicle id="rs_agent_0" type="car" route="straight" depart="0" departSpeed="0"/>
 </routes>

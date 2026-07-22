@@ -501,6 +501,14 @@ Exact `netconvert 1.27.1` принимает export, после чего opt-in 
 выполняет пять tick на сгенерированной CSN-дороге. Junction topology, demand и
 routes намеренно остаются E10-T04/E10-T06.
 
+Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
+footprints одним bounded вызовом после `StepSession`; worker публикует
+отсортированный protocol-v3 SoA frame через отдельный latest-wins writer, не
+блокируя control pipe. ABI fixture и exact SUMO 1.27.1 smoke проверяют compact
+agent IDs и размер 4,5 × 1,8 м. Полное Design-demand→agent source mapping,
+person/signal/queue batches, benchmark и Arrow/shared-memory решение остаются
+следующими частями E10-T06…T08/E11-T03.
+
 Для задач T03–T07 обязательны `unsupported_feature` fixtures. Экспорт не должен удалять неподдерживаемые сущности.
 
 ## 19. Epic E11 — Simulation UX и динамический renderer

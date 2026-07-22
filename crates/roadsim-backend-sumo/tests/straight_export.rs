@@ -1,6 +1,6 @@
 use roadsim_backend_sumo::{
-    SUMO_EDGES_FILE, SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SumoExportErrorCode,
-    SumoRoadExportOptions, export_straight_network,
+    SUMO_EDGES_FILE, SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SumoAgentId,
+    SumoExportErrorCode, SumoRoadExportOptions, export_straight_network,
 };
 use roadsim_compiled_network::{
     CapabilityId, CapabilityRequirements, CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader,
@@ -82,6 +82,15 @@ fn speed_is_explicit_and_rejects_invalid_values() {
         assert_eq!(error.code(), SumoExportErrorCode::InvalidSpeed);
         assert!(error.object_refs().is_empty());
     }
+}
+
+#[test]
+fn compact_agent_ids_use_the_worker_namespace_without_hashing() {
+    assert_eq!(SumoAgentId::from_compact(0).as_str(), "rs_agent_0");
+    assert_eq!(
+        SumoAgentId::from_compact(u32::MAX).as_str(),
+        "rs_agent_4294967295"
+    );
 }
 
 #[test]

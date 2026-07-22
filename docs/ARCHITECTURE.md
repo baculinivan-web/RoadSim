@@ -490,6 +490,12 @@ signal_group_id[] / state[]
 queue_sample[]
 ```
 
+SUMO vehicle IDs генерируются adapter как `rs_agent_<compact u32>` и
+восстанавливаются worker без хэширования строк. Native bridge одним вызовом
+возвращает отсортированный bounded batch; неизвестный/дублирующийся ID блокирует
+кадр. Позиция SUMO у переднего края автомобиля переводится в центр метрического
+footprint, а navigation angle — в математический heading local CRS.
+
 Render sampling отделен от simulation step. UI может отображать интерполяцию между полученными кадрами, не меняя метрики.
 
 ## 12. Desktop shell, UI и rendering

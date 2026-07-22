@@ -16,8 +16,26 @@ pub const SUMO_NETWORK_EXPORT_VERSION: u32 = 1;
 pub const SUMO_NODES_FILE: &str = "roadsim.nod.xml";
 /// Conventional filename for the generated SUMO plain edges document.
 pub const SUMO_EDGES_FILE: &str = "roadsim.edg.xml";
+/// Stable namespace used to recover RoadSim compact agent IDs in the worker.
+pub const SUMO_AGENT_ID_PREFIX: &str = "rs_agent_";
 
 const MAX_EXPORTED_LANES: usize = 1_000_000;
+
+/// Generated SUMO vehicle/person identifier scoped to one simulation run.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SumoAgentId(String);
+
+impl SumoAgentId {
+    #[must_use]
+    pub fn from_compact(compact_id: u32) -> Self {
+        Self(format!("{SUMO_AGENT_ID_PREFIX}{compact_id}"))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 /// Explicit backend options that are not yet represented by the CSN.
 #[derive(Clone, Copy, Debug, PartialEq)]

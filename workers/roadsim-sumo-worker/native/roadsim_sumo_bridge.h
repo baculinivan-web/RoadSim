@@ -11,6 +11,15 @@
 
 extern "C" {
 
+struct RoadSimVehicleState {
+    std::uint32_t agent_id;
+    double x_m;
+    double y_m;
+    double heading_rad;
+    double length_m;
+    double width_m;
+};
+
 ROADSIM_SUMO_EXPORT std::uint32_t roadsim_sumo_bridge_abi();
 ROADSIM_SUMO_EXPORT int roadsim_sumo_engine_version(char* output, std::size_t capacity);
 ROADSIM_SUMO_EXPORT int roadsim_sumo_engine_revision(char* output, std::size_t capacity);
@@ -23,6 +32,11 @@ ROADSIM_SUMO_EXPORT int roadsim_sumo_step(std::uint32_t steps,
                                           std::uint64_t* tick,
                                           char* error,
                                           std::size_t error_capacity);
+ROADSIM_SUMO_EXPORT int roadsim_sumo_collect_vehicles(RoadSimVehicleState* output,
+                                                      std::size_t capacity,
+                                                      std::size_t* output_count,
+                                                      char* error,
+                                                      std::size_t error_capacity);
 ROADSIM_SUMO_EXPORT int roadsim_sumo_close(char* error, std::size_t error_capacity);
 
 }
