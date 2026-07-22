@@ -3,10 +3,11 @@ use roadsim_backend_sumo::{
     SumoExportErrorCode, SumoRoadExportOptions, export_straight_network,
 };
 use roadsim_compiled_network::{
-    CapabilityId, CapabilityRequirements, CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader,
-    CompiledPoint, LaneOrigin, LaneTable, SourceRevision,
+    CapabilityId, CapabilityRequirements, CompiledLaneId, CompiledLaneUse, CompiledMovement,
+    CompiledNetwork, CompiledNetworkHeader, CompiledPoint, LaneAdjacency, LaneGraph, LaneOrigin,
+    LaneTable, MovementTable, PedestrianGraph, SourceRevision,
 };
-use roadsim_types::{CorridorId, LaneId, Sha256Digest};
+use roadsim_types::{CorridorId, JunctionId, LaneId, Sha256Digest};
 use std::{path::PathBuf, process::Command};
 
 fn network(lane_use: CompiledLaneUse) -> CompiledNetwork {
@@ -34,6 +35,38 @@ fn network(lane_use: CompiledLaneUse) -> CompiledNetwork {
 
 fn options() -> SumoRoadExportOptions {
     SumoRoadExportOptions::new(13.89).unwrap()
+}
+
+fn network_with_movement() -> CompiledNetwork {
+    let lanes = LaneTable::new(
+        vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(100.0, 0.0)],
+        vec![
+            CompiledPoint::new(100.0, 0.0),
+            CompiledPoint::new(200.0, 0.0),
+        ],
+        vec![3.5, 3.5],
+        vec![
+            CompiledLaneUse::GeneralTraffic,
+            CompiledLaneUse::GeneralTraffic,
+        ],
+    )
+    .unwrap();
+    let junction_id = JunctionId::from_u128(30);
+    let from = CompiledLaneId::new(0);
+    let to = CompiledLaneId::new(1);
+    CompiledNetwork::new_with_graphs(
+        CompiledNetworkHeader::new(SourceRevision::new(7), Sha256Digest::from_bytes([9; 32])),
+        lanes,
+        vec![
+            LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(11)),
+            LaneOrigin::new(CorridorId::from_u128(20), LaneId::from_u128(21)),
+        ],
+        LaneGraph::new(2, vec![LaneAdjacency::new(from, to, junction_id)]).unwrap(),
+        MovementTable::new(2, vec![CompiledMovement::new(from, to, junction_id)]).unwrap(),
+        PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+        CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -73,6 +106,25 @@ fn unsupported_lane_use_fails_with_design_object_evidence() {
             .contains(&CorridorId::from_u128(10).into())
     );
     assert!(error.object_refs().contains(&LaneId::from_u128(11).into()));
+}
+
+#[test]
+fn junction_movements_fail_before_t04_instead_of_silent_netconvert() {
+    let error = export_straight_network(&network_with_movement(), options()).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        SumoExportErrorCode::UnsupportedJunctionMovements
+    );
+    for object_ref in [
+        JunctionId::from_u128(30).into(),
+        CorridorId::from_u128(10).into(),
+        LaneId::from_u128(11).into(),
+        CorridorId::from_u128(20).into(),
+        LaneId::from_u128(21).into(),
+    ] {
+        assert!(error.object_refs().contains(&object_ref));
+    }
 }
 
 #[test]

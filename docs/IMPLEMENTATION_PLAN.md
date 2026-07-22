@@ -369,7 +369,7 @@ meshes и instanced/performance acceptance E05-T04…T08 ещё не реали�
 Compact lane arrays, source map, stable SHA-256 content hash и первые capability
 IDs покрыты unit/regression/property tests. Arc/transition и переменный профиль
 явно блокируются diagnostics с Design object refs; полноценная curve evaluation,
-junction movements и весь capability manifest остаются следующими задачами.
+movement curves/conflicts и весь capability manifest остаются следующими задачами.
 
 Статус E07-T04: 🟢 CSN schema v2 содержит compact directed lane adjacency и
 pedestrian graph с полным lane/walking-area/sidewalk/crossing source mapping.
@@ -378,6 +378,13 @@ Junction approaches создают только coarse inter-corridor reachabili
 links. Car/bus и pedestrian demand с disconnected endpoints блокируется до
 backend compile стабильной object-linked diagnostic. Unit, regression и chain
 property tests покрывают direction, transitive reachability и invalid graph IDs.
+
+Статус E07-T05: 🟢 CSN schema v3 содержит детерминированно индексированные
+semantic lane-to-lane movements и требует backing edge в coarse lane graph для
+каждого movement. Compiler поддерживает однозначные one-lane merge/diverge и
+блокирует несколько target lanes одного corridor для одной source lane кодом
+`compiler.movement.ambiguous` со ссылками на junction, corridors и lanes. Явный
+lane-assignment intent, movement curves, conflicts и priority остаются E07-T06.
 
 ## 16. Epic E08 — Нормативный движок RU
 
@@ -499,7 +506,8 @@ Bundle сохраняет `CompiledLaneId → LaneOrigin → SUMO edge/lane` map
 явную скорость и блокирует неподдерживаемые lane uses с Design object evidence.
 Exact `netconvert 1.27.1` принимает export, после чего opt-in worker smoke
 выполняет пять tick на сгенерированной CSN-дороге. Junction topology, demand и
-routes намеренно остаются E10-T04/E10-T06.
+routes намеренно остаются E10-T04/E10-T06; CSN с movements до T04 явно
+отклоняется кодом `backend.sumo.junction_movements.unsupported` с object refs.
 
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует

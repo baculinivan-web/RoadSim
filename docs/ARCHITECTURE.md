@@ -326,6 +326,14 @@ compact lanes разных corridor через declared junction approaches. О�
 каждого directed link; walking areas и sidewalks сохраняются отдельными node
 origins, даже если пока изолированы.
 
+`MovementTable` повышает однозначные lane-adjacency edges до backend-independent
+semantic movements `(from lane, to lane, junction)` с детерминированными compact
+ID. Разные target corridors считаются отдельными допустимыми направлениями, но
+несколько target lanes одного corridor для одной source lane требуют явного
+lane-assignment intent и до его появления блокируют compile с object evidence.
+Compiler не угадывает такой выбор по геометрии. Movement curves, conflict zones
+и priority relations остаются отдельной стадией и не входят в этот контракт.
+
 ### 8.3. Capability requirements
 
 Compiler маркирует необходимые возможности, например:

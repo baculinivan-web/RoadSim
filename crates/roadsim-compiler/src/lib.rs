@@ -6,9 +6,10 @@
 
 use roadsim_compiled_network::{
     COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledLaneId,
-    CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader, CompiledPedestrianNodeId,
-    CompiledPoint, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable, MAX_GRAPH_EDGES,
-    PedestrianAdjacency, PedestrianGraph, PedestrianNodeOrigin, SourceRevision,
+    CompiledLaneUse, CompiledMovement, CompiledNetwork, CompiledNetworkHeader,
+    CompiledPedestrianNodeId, CompiledPoint, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
+    MAX_GRAPH_EDGES, MovementTable, PedestrianAdjacency, PedestrianGraph, PedestrianNodeOrigin,
+    SourceRevision,
 };
 use roadsim_domain::{
     Corridor, CorridorEnd, DemandEndpoint, DemandMode, LaneDirection, LaneSlice, LaneUse, Project,
@@ -30,6 +31,8 @@ pub enum CompileErrorCode {
     VariableCrossSectionUnsupported,
     LaneTableInvariant,
     LaneGraphInvariant,
+    MovementAmbiguous,
+    MovementInvariant,
     PedestrianGraphInvariant,
     DemandEndpointUnreachable,
     DemandModeUnsupported,
@@ -47,6 +50,8 @@ impl CompileErrorCode {
             }
             Self::LaneTableInvariant => "compiler.lane_table.invariant",
             Self::LaneGraphInvariant => "compiler.lane_graph.invariant",
+            Self::MovementAmbiguous => "compiler.movement.ambiguous",
+            Self::MovementInvariant => "compiler.movement.invariant",
             Self::PedestrianGraphInvariant => "compiler.pedestrian_graph.invariant",
             Self::DemandEndpointUnreachable => "compiler.demand.endpoint_unreachable",
             Self::DemandModeUnsupported => "compiler.demand.mode_unsupported",
@@ -117,6 +122,7 @@ pub fn compile_project(
     let lanes = LaneTable::new(builder.starts, builder.ends, builder.widths_m, builder.uses)
         .ok_or_else(|| CompileError::new(CompileErrorCode::LaneTableInvariant, Vec::new()))?;
     let lane_graph = compile_lane_graph(project, &builder.origins, lanes.len())?;
+    let movements = compile_movements(&builder.origins, &lane_graph)?;
     let pedestrian_graph = compile_pedestrian_graph(project)?;
     if !pedestrian_graph.origins().is_empty() {
         builder
@@ -130,6 +136,7 @@ pub fn compile_project(
         &lanes,
         &builder.origins,
         &lane_graph,
+        &movements,
         &pedestrian_graph,
         &requirements,
     );
@@ -138,6 +145,7 @@ pub fn compile_project(
         lanes,
         builder.origins,
         lane_graph,
+        movements,
         pedestrian_graph,
         requirements,
     )
@@ -317,6 +325,46 @@ const fn lane_exits_at(direction: LaneDirection, end: CorridorEnd) -> bool {
     )
 }
 
+fn compile_movements(
+    origins: &[LaneOrigin],
+    lane_graph: &LaneGraph,
+) -> Result<MovementTable, CompileError> {
+    let mut targets = BTreeMap::<_, Vec<CompiledLaneId>>::new();
+    for edge in lane_graph.adjacency() {
+        let destination = origins[edge.to().get() as usize];
+        targets
+            .entry((edge.junction_id(), edge.from(), destination.corridor_id()))
+            .or_default()
+            .push(edge.to());
+    }
+    for ((junction_id, from, _), target_lanes) in targets {
+        if target_lanes.len() > 1 {
+            let source = origins[from.get() as usize];
+            let mut object_refs = vec![
+                junction_id.into(),
+                source.corridor_id().into(),
+                source.lane_id().into(),
+            ];
+            for target in target_lanes {
+                let destination = origins[target.get() as usize];
+                object_refs.push(destination.corridor_id().into());
+                object_refs.push(destination.lane_id().into());
+            }
+            return Err(CompileError::new(
+                CompileErrorCode::MovementAmbiguous,
+                object_refs,
+            ));
+        }
+    }
+    let movements = lane_graph
+        .adjacency()
+        .iter()
+        .map(|edge| CompiledMovement::new(edge.from(), edge.to(), edge.junction_id()))
+        .collect();
+    MovementTable::new(lane_graph.node_count(), movements)
+        .map_err(|_| CompileError::new(CompileErrorCode::MovementInvariant, Vec::new()))
+}
+
 fn compile_pedestrian_graph(project: &Project) -> Result<PedestrianGraph, CompileError> {
     let mut origins: Vec<_> = project
         .design_catalog()
@@ -446,6 +494,7 @@ fn content_hash(
     lanes: &LaneTable,
     origins: &[LaneOrigin],
     lane_graph: &LaneGraph,
+    movements: &MovementTable,
     pedestrian_graph: &PedestrianGraph,
     requirements: &CapabilityRequirements,
 ) -> Sha256Digest {
@@ -468,6 +517,12 @@ fn content_hash(
         hash.update(edge.from().get().to_le_bytes());
         hash.update(edge.to().get().to_le_bytes());
         hash.update(edge.junction_id().as_uuid().as_bytes());
+    }
+    hash.update((movements.movements().len() as u64).to_le_bytes());
+    for movement in movements.movements() {
+        hash.update(movement.from().get().to_le_bytes());
+        hash.update(movement.to().get().to_le_bytes());
+        hash.update(movement.junction_id().as_uuid().as_bytes());
     }
     hash.update((pedestrian_graph.origins().len() as u64).to_le_bytes());
     for origin in pedestrian_graph.origins() {

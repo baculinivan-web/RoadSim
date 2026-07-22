@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::{collections::BTreeSet, error::Error, fmt};
 
 /// Schema of the in-memory CSN contract.
-pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 2;
+pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 3;
 pub const MAX_GRAPH_NODES: u32 = 1_000_000;
 pub const MAX_GRAPH_EDGES: usize = 4_000_000;
 
@@ -192,6 +192,159 @@ impl LaneGraph {
         )
     }
 }
+
+/// Compact zero-based movement index used by backend connector tables.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct CompiledMovementId(u32);
+
+impl CompiledMovementId {
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Backend-independent semantic lane movement before curve generation.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct CompiledMovement {
+    from: CompiledLaneId,
+    to: CompiledLaneId,
+    junction_id: JunctionId,
+}
+
+impl CompiledMovement {
+    #[must_use]
+    pub const fn new(from: CompiledLaneId, to: CompiledLaneId, junction_id: JunctionId) -> Self {
+        Self {
+            from,
+            to,
+            junction_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn from(self) -> CompiledLaneId {
+        self.from
+    }
+
+    #[must_use]
+    pub const fn to(self) -> CompiledLaneId {
+        self.to
+    }
+
+    #[must_use]
+    pub const fn junction_id(self) -> JunctionId {
+        self.junction_id
+    }
+}
+
+/// Deterministically indexed semantic movements. Curves/conflicts are E07-T06.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MovementTable {
+    lane_count: u32,
+    movements: Vec<CompiledMovement>,
+}
+
+impl MovementTable {
+    pub fn new(
+        lane_count: u32,
+        mut movements: Vec<CompiledMovement>,
+    ) -> Result<Self, MovementError> {
+        if lane_count > MAX_GRAPH_NODES {
+            return Err(MovementError(MovementErrorCode::TooManyLanes));
+        }
+        if movements.len() > MAX_GRAPH_EDGES {
+            return Err(MovementError(MovementErrorCode::TooManyMovements));
+        }
+        movements.sort_unstable();
+        if movements.iter().any(|movement| {
+            movement.from().get() >= lane_count || movement.to().get() >= lane_count
+        }) {
+            return Err(MovementError(MovementErrorCode::LaneOutsideTable));
+        }
+        if movements
+            .iter()
+            .any(|movement| movement.from() == movement.to())
+        {
+            return Err(MovementError(MovementErrorCode::SelfMovement));
+        }
+        for pair in movements.windows(2) {
+            if pair[0] == pair[1] {
+                return Err(MovementError(MovementErrorCode::DuplicateMovement));
+            }
+            if pair[0].from() == pair[1].from() && pair[0].to() == pair[1].to() {
+                return Err(MovementError(MovementErrorCode::LanePairAmbiguous));
+            }
+        }
+        Ok(Self {
+            lane_count,
+            movements,
+        })
+    }
+
+    #[must_use]
+    pub const fn lane_count(&self) -> u32 {
+        self.lane_count
+    }
+
+    #[must_use]
+    pub fn movements(&self) -> &[CompiledMovement] {
+        &self.movements
+    }
+
+    #[must_use]
+    pub fn movement(&self, id: CompiledMovementId) -> Option<CompiledMovement> {
+        self.movements.get(id.get() as usize).copied()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MovementErrorCode {
+    TooManyLanes,
+    TooManyMovements,
+    LaneOutsideTable,
+    SelfMovement,
+    DuplicateMovement,
+    LanePairAmbiguous,
+}
+
+impl MovementErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TooManyLanes => "csn.movement.lanes.too_many",
+            Self::TooManyMovements => "csn.movement.count.too_many",
+            Self::LaneOutsideTable => "csn.movement.lane.outside_table",
+            Self::SelfMovement => "csn.movement.self",
+            Self::DuplicateMovement => "csn.movement.duplicate",
+            Self::LanePairAmbiguous => "csn.movement.lane_pair.ambiguous",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MovementError(MovementErrorCode);
+
+impl MovementError {
+    #[must_use]
+    pub const fn code(self) -> MovementErrorCode {
+        self.0
+    }
+}
+
+impl fmt::Display for MovementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+impl Error for MovementError {}
 
 /// Compact pedestrian graph node ID.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -614,6 +767,8 @@ impl CompiledNetworkHeader {
 pub enum NetworkErrorCode {
     SourceMapLengthMismatch,
     LaneGraphLengthMismatch,
+    MovementTableLengthMismatch,
+    MovementGraphMismatch,
     GraphLimitExceeded,
 }
 
@@ -623,6 +778,8 @@ impl NetworkErrorCode {
         match self {
             Self::SourceMapLengthMismatch => "csn.source_map.length_mismatch",
             Self::LaneGraphLengthMismatch => "csn.lane_graph.length_mismatch",
+            Self::MovementTableLengthMismatch => "csn.movement_table.length_mismatch",
+            Self::MovementGraphMismatch => "csn.movement_graph.mismatch",
             Self::GraphLimitExceeded => "csn.graph.limit_exceeded",
         }
     }
@@ -653,6 +810,7 @@ pub struct CompiledNetwork {
     lanes: LaneTable,
     lane_origins: Vec<LaneOrigin>,
     lane_graph: LaneGraph,
+    movements: MovementTable,
     pedestrian_graph: PedestrianGraph,
     requirements: CapabilityRequirements,
 }
@@ -666,6 +824,8 @@ impl CompiledNetwork {
     ) -> Result<Self, NetworkError> {
         let lane_graph = LaneGraph::new(lanes.len() as u32, Vec::new())
             .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
+        let movements = MovementTable::new(lanes.len() as u32, Vec::new())
+            .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
         let pedestrian_graph =
             PedestrianGraph::new(Vec::new(), Vec::new()).expect("empty graph is valid");
         Self::new_with_graphs(
@@ -673,6 +833,7 @@ impl CompiledNetwork {
             lanes,
             lane_origins,
             lane_graph,
+            movements,
             pedestrian_graph,
             requirements,
         )
@@ -683,6 +844,7 @@ impl CompiledNetwork {
         lanes: LaneTable,
         lane_origins: Vec<LaneOrigin>,
         lane_graph: LaneGraph,
+        movements: MovementTable,
         pedestrian_graph: PedestrianGraph,
         requirements: CapabilityRequirements,
     ) -> Result<Self, NetworkError> {
@@ -692,11 +854,27 @@ impl CompiledNetwork {
         if lanes.len() != lane_graph.node_count() as usize {
             return Err(NetworkError(NetworkErrorCode::LaneGraphLengthMismatch));
         }
+        if lanes.len() != movements.lane_count() as usize {
+            return Err(NetworkError(NetworkErrorCode::MovementTableLengthMismatch));
+        }
+        if movements.movements().iter().any(|movement| {
+            lane_graph
+                .adjacency()
+                .binary_search(&LaneAdjacency::new(
+                    movement.from(),
+                    movement.to(),
+                    movement.junction_id(),
+                ))
+                .is_err()
+        }) {
+            return Err(NetworkError(NetworkErrorCode::MovementGraphMismatch));
+        }
         Ok(Self {
             header,
             lanes,
             lane_origins,
             lane_graph,
+            movements,
             pedestrian_graph,
             requirements,
         })
@@ -720,6 +898,11 @@ impl CompiledNetwork {
     #[must_use]
     pub const fn lane_graph(&self) -> &LaneGraph {
         &self.lane_graph
+    }
+
+    #[must_use]
+    pub const fn movements(&self) -> &MovementTable {
+        &self.movements
     }
 
     #[must_use]
@@ -839,6 +1022,127 @@ mod tests {
                 .code(),
             GraphErrorCode::TooManyNodes
         );
+    }
+
+    #[test]
+    fn movement_table_assigns_stable_compact_ids_and_rejects_ambiguity() {
+        let first = CompiledMovement::new(
+            CompiledLaneId::new(0),
+            CompiledLaneId::new(2),
+            JunctionId::from_u128(2),
+        );
+        let second = CompiledMovement::new(
+            CompiledLaneId::new(0),
+            CompiledLaneId::new(1),
+            JunctionId::from_u128(1),
+        );
+        let movements = MovementTable::new(3, vec![first, second]).unwrap();
+        assert_eq!(movements.movement(CompiledMovementId::new(0)), Some(second));
+        assert_eq!(movements.movement(CompiledMovementId::new(1)), Some(first));
+
+        let ambiguous = MovementTable::new(
+            2,
+            vec![
+                CompiledMovement::new(
+                    CompiledLaneId::new(0),
+                    CompiledLaneId::new(1),
+                    JunctionId::from_u128(1),
+                ),
+                CompiledMovement::new(
+                    CompiledLaneId::new(0),
+                    CompiledLaneId::new(1),
+                    JunctionId::from_u128(2),
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(ambiguous.code(), MovementErrorCode::LanePairAmbiguous);
+    }
+
+    #[test]
+    fn network_requires_every_movement_to_have_a_coarse_graph_edge() {
+        let lanes = LaneTable::new(
+            vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(1.0, 0.0)],
+            vec![CompiledPoint::new(1.0, 0.0), CompiledPoint::new(2.0, 0.0)],
+            vec![3.5, 3.5],
+            vec![
+                CompiledLaneUse::GeneralTraffic,
+                CompiledLaneUse::GeneralTraffic,
+            ],
+        )
+        .unwrap();
+        let junction = JunctionId::from_u128(3);
+        let lane_graph = LaneGraph::new(
+            2,
+            vec![LaneAdjacency::new(
+                CompiledLaneId::new(0),
+                CompiledLaneId::new(1),
+                junction,
+            )],
+        )
+        .unwrap();
+        let movements = MovementTable::new(
+            2,
+            vec![CompiledMovement::new(
+                CompiledLaneId::new(1),
+                CompiledLaneId::new(0),
+                junction,
+            )],
+        )
+        .unwrap();
+        let error = CompiledNetwork::new_with_graphs(
+            CompiledNetworkHeader::new(SourceRevision::new(1), Sha256Digest::from_bytes([1; 32])),
+            lanes,
+            vec![
+                LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(20)),
+                LaneOrigin::new(CorridorId::from_u128(11), LaneId::from_u128(21)),
+            ],
+            lane_graph,
+            movements,
+            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+            CapabilityRequirements::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), NetworkErrorCode::MovementGraphMismatch);
+    }
+
+    #[test]
+    fn coarse_lane_graph_may_retain_candidates_not_promoted_to_movements() {
+        let lanes = LaneTable::new(
+            vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(1.0, 0.0)],
+            vec![CompiledPoint::new(1.0, 0.0), CompiledPoint::new(2.0, 0.0)],
+            vec![3.5, 3.5],
+            vec![
+                CompiledLaneUse::GeneralTraffic,
+                CompiledLaneUse::GeneralTraffic,
+            ],
+        )
+        .unwrap();
+        let lane_graph = LaneGraph::new(
+            2,
+            vec![LaneAdjacency::new(
+                CompiledLaneId::new(0),
+                CompiledLaneId::new(1),
+                JunctionId::from_u128(3),
+            )],
+        )
+        .unwrap();
+        let network = CompiledNetwork::new_with_graphs(
+            CompiledNetworkHeader::new(SourceRevision::new(1), Sha256Digest::from_bytes([1; 32])),
+            lanes,
+            vec![
+                LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(20)),
+                LaneOrigin::new(CorridorId::from_u128(11), LaneId::from_u128(21)),
+            ],
+            lane_graph,
+            MovementTable::new(2, Vec::new()).unwrap(),
+            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+            CapabilityRequirements::default(),
+        )
+        .unwrap();
+
+        assert!(network.movements().movements().is_empty());
+        assert_eq!(network.lane_graph().adjacency().len(), 1);
     }
 
     #[test]

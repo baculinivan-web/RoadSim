@@ -98,12 +98,22 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   junction approaches, walking areas, sidewalks и crossings. Compiler проверяет
   car/bus/pedestrian demand reachability до backend и возвращает object-linked
   diagnostic для disconnected endpoints.
+- CSN получила детерминированную таблицу semantic junction movements с compact
+  IDs. Compiler выводит однозначные lane-to-lane движения из junction approaches
+  и блокирует неоднозначный выбор нескольких полос одного target corridor с
+  object-linked diagnostic вместо неявной эвристики.
 
 ### Changed
 
 - In-memory CSN schema повышена с v1 до v2: semantic content hash теперь включает
   lane/pedestrian adjacency и их source maps. V1 runtime migration не вводится,
   поскольку persisted CSN artifacts ещё не публиковались.
+- In-memory CSN schema повышена с v2 до v3: semantic content hash теперь включает
+  junction movements, а `CompiledNetwork::new_with_graphs` требует, чтобы каждое
+  movement имело backing edge в coarse lane graph. Persisted CSN artifacts
+  по-прежнему не публиковались, поэтому runtime migration не вводится. Straight
+  SUMO exporter явно отклоняет movements до E10-T04 вместо silent topology
+  downgrade.
 
 - Worker control/data protocol повышен с v1 до v2: handshake обязательно
   публикует bounded exact engine name/version/build revision и может потребовать

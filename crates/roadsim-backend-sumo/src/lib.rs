@@ -67,6 +67,7 @@ pub enum SumoExportErrorCode {
     NetworkTooLarge,
     InvalidSpeed,
     UnsupportedLaneUse,
+    UnsupportedJunctionMovements,
 }
 
 impl SumoExportErrorCode {
@@ -77,6 +78,7 @@ impl SumoExportErrorCode {
             Self::NetworkTooLarge => "backend.sumo.network.too_large",
             Self::InvalidSpeed => "backend.sumo.road.speed_invalid",
             Self::UnsupportedLaneUse => "backend.sumo.lane_use.unsupported",
+            Self::UnsupportedJunctionMovements => "backend.sumo.junction_movements.unsupported",
         }
     }
 }
@@ -221,6 +223,24 @@ pub fn export_straight_network(
         return Err(SumoExportError::new(
             SumoExportErrorCode::NetworkTooLarge,
             Vec::new(),
+        ));
+    }
+    if let Some(movement) = network.movements().movements().first() {
+        let from = network
+            .lane_origin(movement.from())
+            .expect("CompiledNetwork guarantees movement lane origins");
+        let to = network
+            .lane_origin(movement.to())
+            .expect("CompiledNetwork guarantees movement lane origins");
+        return Err(SumoExportError::new(
+            SumoExportErrorCode::UnsupportedJunctionMovements,
+            vec![
+                movement.junction_id().into(),
+                from.corridor_id().into(),
+                from.lane_id().into(),
+                to.corridor_id().into(),
+                to.lane_id().into(),
+            ],
         ));
     }
 

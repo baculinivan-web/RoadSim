@@ -1,6 +1,7 @@
 use proptest::prelude::*;
 use roadsim_compiled_network::{
-    CapabilityId, CompiledLaneId, LaneAdjacency, LaneGraph, PedestrianNodeOrigin, SourceRevision,
+    CapabilityId, CompiledLaneId, CompiledMovementId, LaneAdjacency, LaneGraph,
+    PedestrianNodeOrigin, SourceRevision,
 };
 use roadsim_compiler::{CompileErrorCode, compile_project};
 use roadsim_domain::{
@@ -48,7 +49,11 @@ fn coordinates() -> CoordinateReference {
 }
 
 fn corridor(id: u128, lane_id: u128, start_x: f64) -> Corridor {
-    let lane_id = LaneId::from_u128(lane_id);
+    corridor_with_lanes(id, &[lane_id], start_x)
+}
+
+fn corridor_with_lanes(id: u128, lane_ids: &[u128], start_x: f64) -> Corridor {
+    let lane_ids: Vec<_> = lane_ids.iter().copied().map(LaneId::from_u128).collect();
     let reference_line = ReferenceLine::new(
         ReferenceLinePose::new(point(start_x, 0.0), HeadingRadians::try_new(0.0).unwrap()),
         vec![ReferenceLineElement::line(length(50.0)).unwrap()],
@@ -57,15 +62,28 @@ fn corridor(id: u128, lane_id: u128, start_x: f64) -> Corridor {
     Corridor::new(
         CorridorId::from_u128(id),
         reference_line,
-        vec![LaneDefinition::new(
-            lane_id,
-            LaneDirection::AlongReference,
-            LaneUse::GeneralTraffic,
-        )],
+        lane_ids
+            .iter()
+            .copied()
+            .map(|lane_id| {
+                LaneDefinition::new(
+                    lane_id,
+                    LaneDirection::AlongReference,
+                    LaneUse::GeneralTraffic,
+                )
+            })
+            .collect(),
         CrossSectionProfile::new(vec![CrossSectionSection::new(
             length(0.0),
-            CrossSectionLayout::new(vec![], vec![LaneSlice::new(lane_id, length(3.5)).unwrap()])
-                .unwrap(),
+            CrossSectionLayout::new(
+                vec![],
+                lane_ids
+                    .iter()
+                    .copied()
+                    .map(|lane_id| LaneSlice::new(lane_id, length(3.5)).unwrap())
+                    .collect(),
+            )
+            .unwrap(),
         )])
         .unwrap(),
     )
@@ -121,6 +139,15 @@ fn project(design: DesignCatalog, flow: DemandFlow) -> Project {
     .unwrap()
 }
 
+fn project_without_demand(design: DesignCatalog) -> Project {
+    Project::with_catalog(
+        ProjectId::from_u128(1),
+        ProjectMetadata::new("Graph fixture").unwrap(),
+        coordinates(),
+        design,
+    )
+}
+
 #[test]
 fn connected_corridors_compile_to_directed_lane_reachability() {
     let design = DesignCatalog::with_multimodal(
@@ -156,6 +183,15 @@ fn connected_corridors_compile_to_directed_lane_reachability() {
     .unwrap();
 
     assert_eq!(network.lane_graph().adjacency().len(), 1);
+    assert_eq!(network.movements().movements().len(), 1);
+    assert_eq!(
+        network
+            .movements()
+            .movement(CompiledMovementId::new(0))
+            .unwrap()
+            .junction_id(),
+        JunctionId::from_u128(40)
+    );
     assert_eq!(
         network.lane_graph().adjacency()[0].junction_id(),
         JunctionId::from_u128(40)
@@ -170,6 +206,89 @@ fn connected_corridors_compile_to_directed_lane_reachability() {
             .lane_graph()
             .can_reach(CompiledLaneId::new(1), CompiledLaneId::new(0))
     );
+}
+
+#[test]
+fn one_lane_approaches_infer_stable_merge_and_diverge_movements() {
+    let design = DesignCatalog::with_multimodal(
+        vec![
+            corridor(10, 20, 0.0),
+            corridor(11, 21, 50.0),
+            corridor(12, 22, 50.0),
+            corridor(13, 23, 0.0),
+        ],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                    CorridorEndpointRef::new(CorridorId::from_u128(12), CorridorEnd::Start),
+                    CorridorEndpointRef::new(CorridorId::from_u128(13), CorridorEnd::End),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let network = compile_project(&project_without_demand(design), SourceRevision::new(1)).unwrap();
+
+    let movements = network.movements().movements();
+    assert_eq!(movements.len(), 4);
+    assert_eq!(movements[0].from(), CompiledLaneId::new(0));
+    assert_eq!(movements[0].to(), CompiledLaneId::new(1));
+    assert_eq!(movements[1].from(), CompiledLaneId::new(0));
+    assert_eq!(movements[1].to(), CompiledLaneId::new(2));
+    assert_eq!(movements[2].from(), CompiledLaneId::new(3));
+    assert_eq!(movements[2].to(), CompiledLaneId::new(1));
+    assert_eq!(movements[3].from(), CompiledLaneId::new(3));
+    assert_eq!(movements[3].to(), CompiledLaneId::new(2));
+}
+
+#[test]
+fn multiple_target_lanes_on_one_destination_block_ambiguous_movement() {
+    let design = DesignCatalog::with_multimodal(
+        vec![
+            corridor(10, 20, 0.0),
+            corridor_with_lanes(11, &[21, 22], 50.0),
+        ],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let error =
+        compile_project(&project_without_demand(design), SourceRevision::new(1)).unwrap_err();
+
+    assert_eq!(error.code(), CompileErrorCode::MovementAmbiguous);
+    assert_eq!(error.object_refs().len(), 6);
+    assert!(
+        error
+            .object_refs()
+            .contains(&JunctionId::from_u128(40).into())
+    );
+    for lane_id in [20, 21, 22] {
+        assert!(
+            error
+                .object_refs()
+                .contains(&LaneId::from_u128(lane_id).into())
+        );
+    }
 }
 
 #[test]
@@ -299,5 +418,35 @@ proptest! {
             CompiledLaneId::new(node_count - 1),
             CompiledLaneId::new(0),
         ));
+    }
+
+    #[test]
+    fn one_lane_diverge_movement_ids_are_stable(outgoing_count in 1_u32..16) {
+        let mut corridors = vec![corridor(10, 20, 0.0)];
+        let mut approaches = vec![CorridorEndpointRef::new(
+            CorridorId::from_u128(10),
+            CorridorEnd::End,
+        )];
+        for index in 0..outgoing_count {
+            let corridor_id = u128::from(index) + 100;
+            corridors.push(corridor(corridor_id, u128::from(index) + 200, 50.0));
+            approaches.push(CorridorEndpointRef::new(
+                CorridorId::from_u128(corridor_id),
+                CorridorEnd::Start,
+            ));
+        }
+        let design = DesignCatalog::with_multimodal(
+            corridors,
+            vec![Junction::new(JunctionId::from_u128(40), approaches).unwrap()],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let first = compile_project(&project_without_demand(design.clone()), SourceRevision::new(1)).unwrap();
+        let second = compile_project(&project_without_demand(design), SourceRevision::new(2)).unwrap();
+        prop_assert_eq!(first.movements(), second.movements());
+        prop_assert_eq!(first.movements().movements().len(), outgoing_count as usize);
     }
 }
