@@ -358,6 +358,15 @@ placement и геометрическая близость не создают �
 разрешает stable lane pair в compact movement ID и обязан отклонить отсутствующую
 или конфликтующую связь до backend compile.
 
+`CompiledControlTable` хранит stop position как расстояние от начала движения по
+compact lane, а не station reference line. Fixed-time snapshot сохраняет
+детерминированно индексированные groups, все authored programs/phases/states и
+active program каждого controller. Одна movement принадлежит не более чем одной
+group; active program покрывает все groups своего junction. Фаза, одновременно
+разрешающая `Green` для geometry-conflicting movements, блокирует compile с
+Design object evidence. Другие indications не объявляются permissive без
+отдельной domain semantics.
+
 ### 8.3. Capability requirements
 
 Compiler маркирует необходимые возможности, например:

@@ -3,10 +3,10 @@ use roadsim_backend_sumo::{
     SumoExportErrorCode, SumoRoadExportOptions, export_straight_network,
 };
 use roadsim_compiled_network::{
-    CapabilityId, CapabilityRequirements, CompiledLaneId, CompiledLaneUse, CompiledMovement,
-    CompiledMovementCurve, CompiledMovementId, CompiledNetwork, CompiledNetworkHeader,
-    CompiledPoint, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
-    MovementGeometryTable, MovementTable, PedestrianGraph, SourceRevision,
+    CapabilityId, CapabilityRequirements, CompiledControlTable, CompiledLaneId, CompiledLaneUse,
+    CompiledMovement, CompiledMovementCurve, CompiledMovementId, CompiledNetwork,
+    CompiledNetworkHeader, CompiledPoint, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin,
+    LaneTable, MovementGeometryTable, MovementTable, PedestrianGraph, SourceRevision,
 };
 use roadsim_types::{CorridorId, JunctionId, LaneId, Sha256Digest};
 use std::{path::PathBuf, process::Command};
@@ -79,6 +79,7 @@ fn network_with_movement() -> CompiledNetwork {
             .unwrap(),
             PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
         ),
+        CompiledControlTable::new(2, 1, Vec::new(), Vec::new(), Vec::new(), Vec::new()).unwrap(),
         CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
     )
     .unwrap()

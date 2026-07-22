@@ -33,6 +33,11 @@ E07-T06 использует generated локально-метрический f
 известную crossing pair, symmetric lookup, revision-independent geometry и
 bounded failure paths. Внешних данных и отдельных license obligations нет.
 
+E07-T07 расширяет generated compiler fixtures travel-oriented stop positions,
+fixed-time phase order и двумя crossing movements под разными signal groups.
+Одновременный `Green` обязан вернуть `compiler.signal_phase.conflict` с phase и
+group object refs; fixture не задаёт нормативные длительности или трактовки.
+
 При добавлении fixture рядом должен быть указан источник, лицензия, units,
 ожидаемый результат и процедура осознанного обновления. Golden output нельзя
 перезаписывать обычным test run.

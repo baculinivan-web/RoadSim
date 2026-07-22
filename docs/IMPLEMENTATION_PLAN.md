@@ -415,6 +415,15 @@ tests, а для crossing/overlap centerlines строит width-expanded confli
 пересечения centerlines и priority/yield не заявлены этой стадией; последнее
 остаётся E10-T04.
 
+Статус E07-T07: 🟢 CSN schema v5 содержит travel-oriented per-lane stop
+positions, signal groups с compact movement IDs, authored fixed-time
+programs/phases/states и active controller programs. Compiler публикует
+`signals.fixed_time` только для полного control snapshot и до backend compile
+блокирует unbound/unresolved groups, duplicate movement ownership, несколько
+controllers одного junction и одновременно зелёные geometry-conflicting
+movements стабильными object-linked diagnostics. SUMO TLS mapping и runtime
+signal batches остаются E10-T05/E11-T05.
+
 ## 16. Epic E08 — Нормативный движок RU
 
 **Цель:** versioned, testable rules without false compliance claims.

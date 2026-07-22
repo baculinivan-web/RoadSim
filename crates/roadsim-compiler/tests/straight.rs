@@ -152,7 +152,7 @@ fn straight_two_way_corridor_compiles_to_oriented_lane_arrays() {
     let project = project_with_corridor(straight_corridor(100.0, 3.5, 0.0));
     let network = compile_project(&project, SourceRevision::new(7)).unwrap();
 
-    assert_eq!(network.header().schema_version(), 4);
+    assert_eq!(network.header().schema_version(), 5);
     assert_eq!(network.header().source_revision().get(), 7);
     assert_eq!(network.lanes().len(), 2);
     assert!(
@@ -191,7 +191,7 @@ fn semantic_content_hash_is_stable_across_source_revision() {
     );
     assert_eq!(
         first.header().content_hash().to_string(),
-        "d7c7c7a36d6376b936038e0259c134a49d40464db8e47500a032c5d1069cb589"
+        "a943e63414998770155661d9439b2d29ae141958d66818624b379c1ba619198c"
     );
 }
 

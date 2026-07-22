@@ -5,13 +5,14 @@
 //! only then publishes it to a backend through `Arc<CompiledNetwork>`.
 
 use roadsim_types::{
-    CorridorId, CrossingId, JunctionId, LaneId, Sha256Digest, SidewalkId, WalkingAreaId,
+    CorridorId, CrossingId, JunctionId, LaneId, Sha256Digest, SidewalkId, SignalControllerId,
+    SignalGroupId, SignalPhaseId, SignalProgramId, StopLineId, WalkingAreaId,
 };
 use serde::Serialize;
 use std::{collections::BTreeSet, error::Error, fmt};
 
 /// Schema of the in-memory CSN contract.
-pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 4;
+pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 5;
 pub const MAX_GRAPH_NODES: u32 = 1_000_000;
 pub const MAX_GRAPH_EDGES: usize = 4_000_000;
 
@@ -33,7 +34,7 @@ impl SourceRevision {
 }
 
 /// Coordinate frame used by all compiled geometry.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoordinateFrame {
     /// Project-local Cartesian engineering coordinates in metres.
@@ -53,6 +54,8 @@ pub enum CapabilityId {
     ParkingLanes,
     #[serde(rename = "pedestrian.walking_areas.basic")]
     PedestrianWalkingAreasBasic,
+    #[serde(rename = "signals.fixed_time")]
+    SignalsFixedTime,
 }
 
 impl CapabilityId {
@@ -64,6 +67,7 @@ impl CapabilityId {
             Self::BicycleLanes => "road.bicycle_lanes",
             Self::ParkingLanes => "road.parking_lanes",
             Self::PedestrianWalkingAreasBasic => "pedestrian.walking_areas.basic",
+            Self::SignalsFixedTime => "signals.fixed_time",
         }
     }
 }
@@ -625,6 +629,576 @@ fn point_is_finite(point: CompiledPoint) -> bool {
     point.x_m().is_finite() && point.y_m().is_finite()
 }
 
+/// Per-lane stop position resolved from one authored stop line.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CompiledStopPosition {
+    stop_line_id: StopLineId,
+    lane_id: CompiledLaneId,
+    distance_from_lane_start_m: f64,
+}
+
+impl CompiledStopPosition {
+    #[must_use]
+    pub const fn new(
+        stop_line_id: StopLineId,
+        lane_id: CompiledLaneId,
+        distance_from_lane_start_m: f64,
+    ) -> Self {
+        Self {
+            stop_line_id,
+            lane_id,
+            distance_from_lane_start_m,
+        }
+    }
+
+    #[must_use]
+    pub const fn stop_line_id(self) -> StopLineId {
+        self.stop_line_id
+    }
+
+    #[must_use]
+    pub const fn lane_id(self) -> CompiledLaneId {
+        self.lane_id
+    }
+
+    #[must_use]
+    pub const fn distance_from_lane_start_m(self) -> f64 {
+        self.distance_from_lane_start_m
+    }
+}
+
+/// One signal group resolved to deterministic compact movement IDs.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CompiledSignalGroup {
+    signal_group_id: SignalGroupId,
+    junction_id: JunctionId,
+    movement_ids: Vec<CompiledMovementId>,
+}
+
+impl CompiledSignalGroup {
+    #[must_use]
+    pub fn new(
+        signal_group_id: SignalGroupId,
+        junction_id: JunctionId,
+        movement_ids: Vec<CompiledMovementId>,
+    ) -> Self {
+        Self {
+            signal_group_id,
+            junction_id,
+            movement_ids,
+        }
+    }
+
+    #[must_use]
+    pub const fn signal_group_id(&self) -> SignalGroupId {
+        self.signal_group_id
+    }
+
+    #[must_use]
+    pub const fn junction_id(&self) -> JunctionId {
+        self.junction_id
+    }
+
+    #[must_use]
+    pub fn movement_ids(&self) -> &[CompiledMovementId] {
+        &self.movement_ids
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct CompiledSignalGroupId(u32);
+
+impl CompiledSignalGroupId {
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompiledSignalIndication {
+    Red,
+    RedAmber,
+    Green,
+    Amber,
+    Dark,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct CompiledSignalState {
+    group_id: CompiledSignalGroupId,
+    indication: CompiledSignalIndication,
+}
+
+impl CompiledSignalState {
+    #[must_use]
+    pub const fn new(
+        group_id: CompiledSignalGroupId,
+        indication: CompiledSignalIndication,
+    ) -> Self {
+        Self {
+            group_id,
+            indication,
+        }
+    }
+
+    #[must_use]
+    pub const fn group_id(self) -> CompiledSignalGroupId {
+        self.group_id
+    }
+
+    #[must_use]
+    pub const fn indication(self) -> CompiledSignalIndication {
+        self.indication
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompiledSignalPhase {
+    signal_phase_id: SignalPhaseId,
+    duration_s: f64,
+    intergreen_s: f64,
+    states: Vec<CompiledSignalState>,
+}
+
+impl CompiledSignalPhase {
+    #[must_use]
+    pub fn new(
+        signal_phase_id: SignalPhaseId,
+        duration_s: f64,
+        intergreen_s: f64,
+        states: Vec<CompiledSignalState>,
+    ) -> Self {
+        Self {
+            signal_phase_id,
+            duration_s,
+            intergreen_s,
+            states,
+        }
+    }
+
+    #[must_use]
+    pub const fn signal_phase_id(&self) -> SignalPhaseId {
+        self.signal_phase_id
+    }
+
+    #[must_use]
+    pub const fn duration_s(&self) -> f64 {
+        self.duration_s
+    }
+
+    #[must_use]
+    pub const fn intergreen_s(&self) -> f64 {
+        self.intergreen_s
+    }
+
+    #[must_use]
+    pub fn states(&self) -> &[CompiledSignalState] {
+        &self.states
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompiledSignalProgram {
+    signal_program_id: SignalProgramId,
+    junction_id: JunctionId,
+    phases: Vec<CompiledSignalPhase>,
+}
+
+impl CompiledSignalProgram {
+    #[must_use]
+    pub fn new(
+        signal_program_id: SignalProgramId,
+        junction_id: JunctionId,
+        phases: Vec<CompiledSignalPhase>,
+    ) -> Self {
+        Self {
+            signal_program_id,
+            junction_id,
+            phases,
+        }
+    }
+
+    #[must_use]
+    pub const fn signal_program_id(&self) -> SignalProgramId {
+        self.signal_program_id
+    }
+
+    #[must_use]
+    pub const fn junction_id(&self) -> JunctionId {
+        self.junction_id
+    }
+
+    #[must_use]
+    pub fn phases(&self) -> &[CompiledSignalPhase] {
+        &self.phases
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct CompiledSignalController {
+    signal_controller_id: SignalControllerId,
+    junction_id: JunctionId,
+    active_program_id: SignalProgramId,
+}
+
+impl CompiledSignalController {
+    #[must_use]
+    pub const fn new(
+        signal_controller_id: SignalControllerId,
+        junction_id: JunctionId,
+        active_program_id: SignalProgramId,
+    ) -> Self {
+        Self {
+            signal_controller_id,
+            junction_id,
+            active_program_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn signal_controller_id(self) -> SignalControllerId {
+        self.signal_controller_id
+    }
+
+    #[must_use]
+    pub const fn junction_id(self) -> JunctionId {
+        self.junction_id
+    }
+
+    #[must_use]
+    pub const fn active_program_id(self) -> SignalProgramId {
+        self.active_program_id
+    }
+}
+
+/// Backend-independent stop positions, signal bindings and fixed-time programs.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompiledControlTable {
+    lane_count: u32,
+    movement_count: u32,
+    stop_positions: Vec<CompiledStopPosition>,
+    signal_groups: Vec<CompiledSignalGroup>,
+    signal_programs: Vec<CompiledSignalProgram>,
+    signal_controllers: Vec<CompiledSignalController>,
+}
+
+impl CompiledControlTable {
+    pub fn new(
+        lane_count: u32,
+        movement_count: u32,
+        mut stop_positions: Vec<CompiledStopPosition>,
+        mut signal_groups: Vec<CompiledSignalGroup>,
+        mut signal_programs: Vec<CompiledSignalProgram>,
+        mut signal_controllers: Vec<CompiledSignalController>,
+    ) -> Result<Self, ControlTableError> {
+        if [
+            stop_positions.len(),
+            signal_groups.len(),
+            signal_programs.len(),
+            signal_controllers.len(),
+        ]
+        .into_iter()
+        .any(|count| count > MAX_GRAPH_EDGES)
+        {
+            return Err(ControlTableError(ControlTableErrorCode::LimitExceeded));
+        }
+        stop_positions.sort_by_key(|position| (position.stop_line_id(), position.lane_id()));
+        if stop_positions.iter().any(|position| {
+            position.lane_id().get() >= lane_count
+                || !position.distance_from_lane_start_m().is_finite()
+                || position.distance_from_lane_start_m() < 0.0
+        }) {
+            return Err(ControlTableError(
+                ControlTableErrorCode::StopPositionInvalid,
+            ));
+        }
+        if stop_positions.windows(2).any(|pair| {
+            pair[0].stop_line_id() == pair[1].stop_line_id()
+                && pair[0].lane_id() == pair[1].lane_id()
+        }) {
+            return Err(ControlTableError(
+                ControlTableErrorCode::DuplicateStopPosition,
+            ));
+        }
+
+        let input_group_order: Vec<_> = signal_groups
+            .iter()
+            .map(CompiledSignalGroup::signal_group_id)
+            .collect();
+        signal_groups.sort_by_key(CompiledSignalGroup::signal_group_id);
+        let mut controlled_movements = BTreeSet::new();
+        for group in &mut signal_groups {
+            group.movement_ids.sort_unstable();
+            if group.movement_ids.is_empty() {
+                return Err(ControlTableError(ControlTableErrorCode::SignalGroupUnbound));
+            }
+            if group
+                .movement_ids
+                .iter()
+                .any(|movement| movement.get() >= movement_count)
+            {
+                return Err(ControlTableError(
+                    ControlTableErrorCode::MovementOutsideTable,
+                ));
+            }
+            if group.movement_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err(ControlTableError(
+                    ControlTableErrorCode::DuplicateMovementBinding,
+                ));
+            }
+            if group
+                .movement_ids
+                .iter()
+                .any(|movement| !controlled_movements.insert(*movement))
+            {
+                return Err(ControlTableError(
+                    ControlTableErrorCode::ConflictingSignalGroups,
+                ));
+            }
+        }
+        if signal_groups
+            .windows(2)
+            .any(|pair| pair[0].signal_group_id() == pair[1].signal_group_id())
+        {
+            return Err(ControlTableError(
+                ControlTableErrorCode::DuplicateSignalGroup,
+            ));
+        }
+        let group_index_remap: Vec<_> = input_group_order
+            .iter()
+            .map(|group_id| {
+                signal_groups
+                    .binary_search_by_key(group_id, CompiledSignalGroup::signal_group_id)
+                    .expect("duplicate signal groups were rejected") as u32
+            })
+            .collect();
+        signal_programs.sort_by_key(CompiledSignalProgram::signal_program_id);
+        if signal_programs
+            .windows(2)
+            .any(|pair| pair[0].signal_program_id() == pair[1].signal_program_id())
+        {
+            return Err(ControlTableError(
+                ControlTableErrorCode::DuplicateSignalProgram,
+            ));
+        }
+        for program in &mut signal_programs {
+            if program.phases.is_empty() {
+                return Err(ControlTableError(
+                    ControlTableErrorCode::SignalProgramInvalid,
+                ));
+            }
+            let program_junction_id = program.junction_id();
+            let mut program_groups: Option<BTreeSet<CompiledSignalGroupId>> = None;
+            for phase in &mut program.phases {
+                for state in &mut phase.states {
+                    let input_index = state.group_id().get() as usize;
+                    let Some(canonical_index) = group_index_remap.get(input_index) else {
+                        return Err(ControlTableError(ControlTableErrorCode::SignalPhaseInvalid));
+                    };
+                    state.group_id = CompiledSignalGroupId::new(*canonical_index);
+                }
+                phase.states.sort_unstable();
+                if !phase.duration_s().is_finite()
+                    || phase.duration_s() <= 0.0
+                    || !phase.intergreen_s().is_finite()
+                    || phase.intergreen_s() < 0.0
+                    || phase.states().is_empty()
+                    || phase
+                        .states()
+                        .windows(2)
+                        .any(|pair| pair[0].group_id() == pair[1].group_id())
+                {
+                    return Err(ControlTableError(ControlTableErrorCode::SignalPhaseInvalid));
+                }
+                let phase_groups: BTreeSet<_> = phase
+                    .states()
+                    .iter()
+                    .map(|state| state.group_id())
+                    .collect();
+                if phase_groups.iter().any(|group_id| {
+                    signal_groups[group_id.get() as usize].junction_id() != program_junction_id
+                }) || program_groups
+                    .as_ref()
+                    .is_some_and(|expected| expected != &phase_groups)
+                {
+                    return Err(ControlTableError(
+                        ControlTableErrorCode::SignalProgramGroupMismatch,
+                    ));
+                }
+                program_groups = Some(phase_groups);
+            }
+        }
+        signal_controllers.sort_by_key(|controller| controller.signal_controller_id());
+        let duplicate_controller_id = signal_controllers
+            .windows(2)
+            .any(|pair| pair[0].signal_controller_id() == pair[1].signal_controller_id());
+        let mut controller_junctions = BTreeSet::new();
+        let duplicate_controller_junction = signal_controllers
+            .iter()
+            .any(|controller| !controller_junctions.insert(controller.junction_id()));
+        if duplicate_controller_id || duplicate_controller_junction {
+            return Err(ControlTableError(
+                ControlTableErrorCode::SignalControllerConflict,
+            ));
+        }
+        let mut controlled_groups = BTreeSet::new();
+        for controller in &signal_controllers {
+            let program = signal_programs
+                .binary_search_by_key(&controller.active_program_id(), |program| {
+                    program.signal_program_id()
+                })
+                .ok()
+                .map(|index| &signal_programs[index])
+                .ok_or(ControlTableError(
+                    ControlTableErrorCode::ActiveProgramOutsideTable,
+                ))?;
+            if program.junction_id() != controller.junction_id() {
+                return Err(ControlTableError(
+                    ControlTableErrorCode::ControllerProgramJunctionMismatch,
+                ));
+            }
+            let expected: BTreeSet<_> = signal_groups
+                .iter()
+                .enumerate()
+                .filter_map(|(index, group)| {
+                    (group.junction_id() == controller.junction_id())
+                        .then_some(CompiledSignalGroupId::new(index as u32))
+                })
+                .collect();
+            if program.phases().iter().any(|phase| {
+                phase
+                    .states()
+                    .iter()
+                    .map(|state| state.group_id())
+                    .collect::<BTreeSet<_>>()
+                    != expected
+            }) {
+                return Err(ControlTableError(
+                    ControlTableErrorCode::ActiveProgramGroupMismatch,
+                ));
+            }
+            controlled_groups.extend(expected);
+        }
+        if controlled_groups.len() != signal_groups.len() {
+            return Err(ControlTableError(
+                ControlTableErrorCode::SignalGroupUncontrolled,
+            ));
+        }
+        Ok(Self {
+            lane_count,
+            movement_count,
+            stop_positions,
+            signal_groups,
+            signal_programs,
+            signal_controllers,
+        })
+    }
+
+    #[must_use]
+    pub const fn lane_count(&self) -> u32 {
+        self.lane_count
+    }
+
+    #[must_use]
+    pub const fn movement_count(&self) -> u32 {
+        self.movement_count
+    }
+
+    #[must_use]
+    pub fn stop_positions(&self) -> &[CompiledStopPosition] {
+        &self.stop_positions
+    }
+
+    #[must_use]
+    pub fn signal_groups(&self) -> &[CompiledSignalGroup] {
+        &self.signal_groups
+    }
+
+    #[must_use]
+    pub fn signal_programs(&self) -> &[CompiledSignalProgram] {
+        &self.signal_programs
+    }
+
+    #[must_use]
+    pub fn signal_controllers(&self) -> &[CompiledSignalController] {
+        &self.signal_controllers
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlTableErrorCode {
+    LimitExceeded,
+    StopPositionInvalid,
+    DuplicateStopPosition,
+    SignalGroupUnbound,
+    MovementOutsideTable,
+    DuplicateMovementBinding,
+    ConflictingSignalGroups,
+    DuplicateSignalGroup,
+    DuplicateSignalProgram,
+    SignalProgramInvalid,
+    SignalPhaseInvalid,
+    SignalProgramGroupMismatch,
+    SignalControllerConflict,
+    ActiveProgramOutsideTable,
+    ControllerProgramJunctionMismatch,
+    ActiveProgramGroupMismatch,
+    SignalGroupUncontrolled,
+}
+
+impl ControlTableErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LimitExceeded => "csn.controls.limit_exceeded",
+            Self::StopPositionInvalid => "csn.stop_position.invalid",
+            Self::DuplicateStopPosition => "csn.stop_position.duplicate",
+            Self::SignalGroupUnbound => "csn.signal_group.unbound",
+            Self::MovementOutsideTable => "csn.signal_group.movement.outside_table",
+            Self::DuplicateMovementBinding => "csn.signal_group.movement.duplicate",
+            Self::ConflictingSignalGroups => "csn.signal_group.movement.conflict",
+            Self::DuplicateSignalGroup => "csn.signal_group.duplicate",
+            Self::DuplicateSignalProgram => "csn.signal_program.duplicate",
+            Self::SignalProgramInvalid => "csn.signal_program.invalid",
+            Self::SignalPhaseInvalid => "csn.signal_phase.invalid",
+            Self::SignalProgramGroupMismatch => "csn.signal_program.phase_groups_mismatch",
+            Self::SignalControllerConflict => "csn.signal_controller.conflict",
+            Self::ActiveProgramOutsideTable => "csn.signal_controller.active_program.outside_table",
+            Self::ControllerProgramJunctionMismatch => {
+                "csn.signal_controller.program_junction_mismatch"
+            }
+            Self::ActiveProgramGroupMismatch => "csn.signal_program.group_mismatch",
+            Self::SignalGroupUncontrolled => "csn.signal_group.uncontrolled",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlTableError(ControlTableErrorCode);
+
+impl ControlTableError {
+    #[must_use]
+    pub const fn code(self) -> ControlTableErrorCode {
+        self.0
+    }
+}
+
+impl fmt::Display for ControlTableError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+impl Error for ControlTableError {}
+
 /// Compact pedestrian graph node ID.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -1049,6 +1623,9 @@ pub enum NetworkErrorCode {
     MovementTableLengthMismatch,
     MovementGraphMismatch,
     MovementGeometryCountMismatch,
+    ControlLaneCountMismatch,
+    ControlMovementCountMismatch,
+    ControlMovementJunctionMismatch,
     GraphLimitExceeded,
 }
 
@@ -1061,6 +1638,9 @@ impl NetworkErrorCode {
             Self::MovementTableLengthMismatch => "csn.movement_table.length_mismatch",
             Self::MovementGraphMismatch => "csn.movement_graph.mismatch",
             Self::MovementGeometryCountMismatch => "csn.movement_geometry.count_mismatch",
+            Self::ControlLaneCountMismatch => "csn.controls.lane_count_mismatch",
+            Self::ControlMovementCountMismatch => "csn.controls.movement_count_mismatch",
+            Self::ControlMovementJunctionMismatch => "csn.controls.movement_junction_mismatch",
             Self::GraphLimitExceeded => "csn.graph.limit_exceeded",
         }
     }
@@ -1137,6 +1717,7 @@ pub struct CompiledNetwork {
     lanes: LaneTable,
     lane_origins: Vec<LaneOrigin>,
     topology: CompiledTopology,
+    controls: CompiledControlTable,
     requirements: CapabilityRequirements,
 }
 
@@ -1155,11 +1736,21 @@ impl CompiledNetwork {
             .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
         let pedestrian_graph =
             PedestrianGraph::new(Vec::new(), Vec::new()).expect("empty graph is valid");
+        let controls = CompiledControlTable::new(
+            lanes.len() as u32,
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
         Self::new_with_graphs(
             header,
             lanes,
             lane_origins,
             CompiledTopology::new(lane_graph, movements, movement_geometry, pedestrian_graph),
+            controls,
             requirements,
         )
     }
@@ -1169,6 +1760,7 @@ impl CompiledNetwork {
         lanes: LaneTable,
         lane_origins: Vec<LaneOrigin>,
         topology: CompiledTopology,
+        controls: CompiledControlTable,
         requirements: CapabilityRequirements,
     ) -> Result<Self, NetworkError> {
         if lanes.len() != lane_origins.len() {
@@ -1186,6 +1778,24 @@ impl CompiledNetwork {
             return Err(NetworkError(
                 NetworkErrorCode::MovementGeometryCountMismatch,
             ));
+        }
+        if controls.lane_count() as usize != lanes.len() {
+            return Err(NetworkError(NetworkErrorCode::ControlLaneCountMismatch));
+        }
+        if controls.movement_count() as usize != topology.movements().movements().len() {
+            return Err(NetworkError(NetworkErrorCode::ControlMovementCountMismatch));
+        }
+        for group in controls.signal_groups() {
+            if group.movement_ids().iter().any(|movement_id| {
+                topology
+                    .movements()
+                    .movement(*movement_id)
+                    .is_none_or(|movement| movement.junction_id() != group.junction_id())
+            }) {
+                return Err(NetworkError(
+                    NetworkErrorCode::ControlMovementJunctionMismatch,
+                ));
+            }
         }
         if topology.movements().movements().iter().any(|movement| {
             topology
@@ -1205,6 +1815,7 @@ impl CompiledNetwork {
             lanes,
             lane_origins,
             topology,
+            controls,
             requirements,
         })
     }
@@ -1242,6 +1853,11 @@ impl CompiledNetwork {
     #[must_use]
     pub const fn pedestrian_graph(&self) -> &PedestrianGraph {
         self.topology.pedestrian_graph()
+    }
+
+    #[must_use]
+    pub const fn controls(&self) -> &CompiledControlTable {
+        &self.controls
     }
 
     #[must_use]
@@ -1445,6 +2061,130 @@ mod tests {
     }
 
     #[test]
+    fn control_table_sorts_bindings_and_rejects_cross_group_conflicts() {
+        let first_group = CompiledSignalGroup::new(
+            SignalGroupId::from_u128(10),
+            JunctionId::from_u128(20),
+            vec![CompiledMovementId::new(1)],
+        );
+        let second_group = CompiledSignalGroup::new(
+            SignalGroupId::from_u128(11),
+            JunctionId::from_u128(20),
+            vec![CompiledMovementId::new(0)],
+        );
+        let controls = CompiledControlTable::new(
+            2,
+            2,
+            vec![
+                CompiledStopPosition::new(StopLineId::from_u128(2), CompiledLaneId::new(1), 4.0),
+                CompiledStopPosition::new(StopLineId::from_u128(1), CompiledLaneId::new(0), 3.0),
+            ],
+            vec![second_group, first_group],
+            vec![CompiledSignalProgram::new(
+                SignalProgramId::from_u128(30),
+                JunctionId::from_u128(20),
+                vec![CompiledSignalPhase::new(
+                    SignalPhaseId::from_u128(31),
+                    30.0,
+                    3.0,
+                    vec![
+                        CompiledSignalState::new(
+                            CompiledSignalGroupId::new(0),
+                            CompiledSignalIndication::Green,
+                        ),
+                        CompiledSignalState::new(
+                            CompiledSignalGroupId::new(1),
+                            CompiledSignalIndication::Red,
+                        ),
+                    ],
+                )],
+            )],
+            vec![CompiledSignalController::new(
+                SignalControllerId::from_u128(32),
+                JunctionId::from_u128(20),
+                SignalProgramId::from_u128(30),
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            controls.stop_positions()[0].stop_line_id(),
+            StopLineId::from_u128(1)
+        );
+        assert_eq!(
+            controls.signal_groups()[0].signal_group_id(),
+            SignalGroupId::from_u128(10)
+        );
+        assert_eq!(
+            controls.signal_programs()[0].phases()[0].states(),
+            &[
+                CompiledSignalState::new(
+                    CompiledSignalGroupId::new(0),
+                    CompiledSignalIndication::Red,
+                ),
+                CompiledSignalState::new(
+                    CompiledSignalGroupId::new(1),
+                    CompiledSignalIndication::Green,
+                ),
+            ]
+        );
+
+        let conflict = CompiledControlTable::new(
+            2,
+            2,
+            Vec::new(),
+            vec![
+                CompiledSignalGroup::new(
+                    SignalGroupId::from_u128(10),
+                    JunctionId::from_u128(20),
+                    vec![CompiledMovementId::new(0)],
+                ),
+                CompiledSignalGroup::new(
+                    SignalGroupId::from_u128(11),
+                    JunctionId::from_u128(20),
+                    vec![CompiledMovementId::new(0)],
+                ),
+            ],
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            conflict.code(),
+            ControlTableErrorCode::ConflictingSignalGroups
+        );
+
+        let controller_conflict = CompiledControlTable::new(
+            0,
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CompiledSignalController::new(
+                    SignalControllerId::from_u128(1),
+                    JunctionId::from_u128(20),
+                    SignalProgramId::from_u128(30),
+                ),
+                CompiledSignalController::new(
+                    SignalControllerId::from_u128(2),
+                    JunctionId::from_u128(21),
+                    SignalProgramId::from_u128(31),
+                ),
+                CompiledSignalController::new(
+                    SignalControllerId::from_u128(3),
+                    JunctionId::from_u128(20),
+                    SignalProgramId::from_u128(32),
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(
+            controller_conflict.code(),
+            ControlTableErrorCode::SignalControllerConflict
+        );
+    }
+
+    #[test]
     fn network_requires_every_movement_to_have_a_coarse_graph_edge() {
         let lanes = LaneTable::new(
             vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(1.0, 0.0)],
@@ -1499,6 +2239,8 @@ mod tests {
                 .unwrap(),
                 PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
             ),
+            CompiledControlTable::new(2, 1, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                .unwrap(),
             CapabilityRequirements::default(),
         )
         .unwrap_err();
@@ -1539,6 +2281,8 @@ mod tests {
                 MovementGeometryTable::new(0, Vec::new(), Vec::new()).unwrap(),
                 PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
             ),
+            CompiledControlTable::new(2, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                .unwrap(),
             CapabilityRequirements::default(),
         )
         .unwrap();

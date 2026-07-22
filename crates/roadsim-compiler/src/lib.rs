@@ -1,21 +1,23 @@
 //! Deterministic Design Model to Compiled Simulation Network pipeline.
 //!
 //! The current vertical slice accepts straight corridors with one constant cross
-//! section and compiles exact cubic junction movement connectors. Unsupported
-//! geometry is rejected with a stable diagnostic instead of being simplified
-//! silently.
+//! section, exact cubic junction connectors and fixed-time control bindings.
+//! Unsupported or conflicting behavior is rejected with stable diagnostics
+//! instead of being simplified silently.
 
 use roadsim_compiled_network::{
     COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledConflictKind,
-    CompiledConflictZone, CompiledLaneId, CompiledLaneUse, CompiledMovement, CompiledMovementCurve,
-    CompiledMovementId, CompiledNetwork, CompiledNetworkHeader, CompiledPedestrianNodeId,
-    CompiledPoint, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
-    MAX_GRAPH_EDGES, MovementGeometryTable, MovementTable, PedestrianAdjacency, PedestrianGraph,
-    PedestrianNodeOrigin, SourceRevision,
+    CompiledConflictZone, CompiledControlTable, CompiledLaneId, CompiledLaneUse, CompiledMovement,
+    CompiledMovementCurve, CompiledMovementId, CompiledNetwork, CompiledNetworkHeader,
+    CompiledPedestrianNodeId, CompiledPoint, CompiledSignalController, CompiledSignalGroup,
+    CompiledSignalGroupId, CompiledSignalIndication, CompiledSignalPhase, CompiledSignalProgram,
+    CompiledSignalState, CompiledStopPosition, CompiledTopology, LaneAdjacency, LaneGraph,
+    LaneOrigin, LaneTable, MAX_GRAPH_EDGES, MovementGeometryTable, MovementTable,
+    PedestrianAdjacency, PedestrianGraph, PedestrianNodeOrigin, SourceRevision,
 };
 use roadsim_domain::{
     Corridor, CorridorEnd, DemandEndpoint, DemandMode, LaneDirection, LaneSlice, LaneUse,
-    Point2Meters, Project, ReferenceLineElementKind,
+    Point2Meters, Project, ReferenceLineElementKind, SignalIndication,
 };
 use roadsim_geometry::{
     CubicBezier2, Segment2, SegmentIntersection, segment_intersection, tessellate_cubic,
@@ -152,6 +154,14 @@ pub enum CompileErrorCode {
     MovementGeometryInvariant,
     MovementGeometryLimitExceeded,
     MovementConflictLimitExceeded,
+    StopPositionInvariant,
+    SignalGroupUnbound,
+    SignalMovementUnresolved,
+    SignalMovementConflict,
+    SignalGroupUncontrolled,
+    SignalControllerConflict,
+    SignalPhaseConflict,
+    ControlTableInvariant,
     PedestrianGraphInvariant,
     DemandEndpointUnreachable,
     DemandModeUnsupported,
@@ -175,6 +185,14 @@ impl CompileErrorCode {
             Self::MovementGeometryInvariant => "compiler.movement_geometry.invariant",
             Self::MovementGeometryLimitExceeded => "compiler.movement_geometry.limit_exceeded",
             Self::MovementConflictLimitExceeded => "compiler.movement_conflict.limit_exceeded",
+            Self::StopPositionInvariant => "compiler.stop_position.invariant",
+            Self::SignalGroupUnbound => "compiler.signal_group.unbound",
+            Self::SignalMovementUnresolved => "compiler.signal_movement.unresolved",
+            Self::SignalMovementConflict => "compiler.signal_movement.conflict",
+            Self::SignalGroupUncontrolled => "compiler.signal_group.uncontrolled",
+            Self::SignalControllerConflict => "compiler.signal_controller.conflict",
+            Self::SignalPhaseConflict => "compiler.signal_phase.conflict",
+            Self::ControlTableInvariant => "compiler.controls.invariant",
             Self::PedestrianGraphInvariant => "compiler.pedestrian_graph.invariant",
             Self::DemandEndpointUnreachable => "compiler.demand.endpoint_unreachable",
             Self::DemandModeUnsupported => "compiler.demand.mode_unsupported",
@@ -249,22 +267,34 @@ pub fn compile_project(
     let movements = compile_movements(&builder.origins, &lane_graph)?;
     let movement_geometry =
         compile_movement_geometry(&lanes, &builder.origins, &movements, options)?;
+    let controls = compile_controls(project, &builder.origins, &movements, &movement_geometry)?;
     let pedestrian_graph = compile_pedestrian_graph(project)?;
     if !pedestrian_graph.origins().is_empty() {
         builder
             .requirements
             .insert(CapabilityId::PedestrianWalkingAreasBasic);
     }
+    if !controls.signal_groups().is_empty() {
+        builder.requirements.insert(CapabilityId::SignalsFixedTime);
+    }
     validate_demand_reachability(project, &builder.origins, &lane_graph, &pedestrian_graph)?;
     let requirements = CapabilityRequirements::new(builder.requirements);
     let topology =
         CompiledTopology::new(lane_graph, movements, movement_geometry, pedestrian_graph);
-    let hash = content_hash(project, &lanes, &builder.origins, &topology, &requirements);
+    let hash = content_hash(
+        project,
+        &lanes,
+        &builder.origins,
+        &topology,
+        &controls,
+        &requirements,
+    );
     CompiledNetwork::new_with_graphs(
         CompiledNetworkHeader::new(source_revision, hash),
         lanes,
         builder.origins,
         topology,
+        controls,
         requirements,
     )
     .map_err(|_| CompileError::new(CompileErrorCode::NetworkInvariant, Vec::new()))
@@ -718,6 +748,276 @@ fn conflict_limit_error(
     )
 }
 
+fn compile_controls(
+    project: &Project,
+    origins: &[LaneOrigin],
+    movements: &MovementTable,
+    movement_geometry: &MovementGeometryTable,
+) -> Result<CompiledControlTable, CompileError> {
+    let design = project.design_catalog();
+    let catalog = design.traffic_controls();
+    let mut stop_positions = Vec::new();
+    for stop_line in catalog.stop_lines() {
+        let corridor = design
+            .corridor(stop_line.corridor_id())
+            .expect("DesignCatalog validates stop-line corridor refs");
+        let corridor_length_m = corridor.reference_line().total_length().get();
+        for lane_id in stop_line.lane_ids() {
+            let compiled_lane = compiled_lane_for_design(*lane_id, origins).ok_or_else(|| {
+                CompileError::new(
+                    CompileErrorCode::StopPositionInvariant,
+                    vec![stop_line.id().into(), (*lane_id).into()],
+                )
+            })?;
+            let lane = corridor
+                .lane(*lane_id)
+                .expect("DesignCatalog validates stop-line lane refs");
+            let distance_from_lane_start_m = match lane.direction() {
+                LaneDirection::AlongReference => stop_line.station().get(),
+                LaneDirection::AgainstReference => corridor_length_m - stop_line.station().get(),
+            };
+            stop_positions.push(CompiledStopPosition::new(
+                stop_line.id(),
+                compiled_lane,
+                distance_from_lane_start_m,
+            ));
+        }
+    }
+
+    let mut bindings_by_group = BTreeMap::new();
+    for binding in catalog.signal_movement_bindings() {
+        bindings_by_group
+            .entry(binding.group_id())
+            .or_insert_with(Vec::new)
+            .push(*binding);
+    }
+    let mut signal_groups = Vec::with_capacity(catalog.signal_groups().len());
+    let mut movement_owner = BTreeMap::new();
+    for group in catalog.signal_groups() {
+        let bindings = bindings_by_group.get(&group.id()).ok_or_else(|| {
+            CompileError::new(
+                CompileErrorCode::SignalGroupUnbound,
+                vec![group.id().into(), group.junction_id().into()],
+            )
+        })?;
+        let mut movement_ids = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let from = compiled_lane_for_design(binding.from_lane_id(), origins);
+            let to = compiled_lane_for_design(binding.to_lane_id(), origins);
+            let movement_id = from.zip(to).and_then(|(from, to)| {
+                movements
+                    .movements()
+                    .iter()
+                    .position(|movement| {
+                        movement.from() == from
+                            && movement.to() == to
+                            && movement.junction_id() == group.junction_id()
+                    })
+                    .map(|index| CompiledMovementId::new(index as u32))
+            });
+            let movement_id = movement_id.ok_or_else(|| {
+                CompileError::new(
+                    CompileErrorCode::SignalMovementUnresolved,
+                    vec![
+                        group.id().into(),
+                        group.junction_id().into(),
+                        binding.from_lane_id().into(),
+                        binding.to_lane_id().into(),
+                    ],
+                )
+            })?;
+            if let Some(previous_group) = movement_owner.insert(movement_id, group.id()) {
+                let movement = movements
+                    .movement(movement_id)
+                    .expect("resolved movement ID is inside the movement table");
+                let mut refs = movement_object_refs(movement, origins);
+                refs.push(previous_group.into());
+                refs.push(group.id().into());
+                return Err(CompileError::new(
+                    CompileErrorCode::SignalMovementConflict,
+                    refs,
+                ));
+            }
+            movement_ids.push(movement_id);
+        }
+        signal_groups.push(CompiledSignalGroup::new(
+            group.id(),
+            group.junction_id(),
+            movement_ids,
+        ));
+    }
+
+    let mut controllers_by_junction = BTreeMap::new();
+    for controller in catalog.controllers() {
+        controllers_by_junction
+            .entry(controller.junction_id())
+            .or_insert_with(Vec::new)
+            .push(controller);
+    }
+    for group in catalog.signal_groups() {
+        let controllers = controllers_by_junction
+            .get(&group.junction_id())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if controllers.len() > 1 {
+            let mut refs = vec![group.junction_id().into(), group.id().into()];
+            refs.extend(
+                controllers
+                    .iter()
+                    .map(|controller| ObjectRef::from(controller.id())),
+            );
+            return Err(CompileError::new(
+                CompileErrorCode::SignalControllerConflict,
+                refs,
+            ));
+        }
+        let controller = controllers.first().ok_or_else(|| {
+            CompileError::new(
+                CompileErrorCode::SignalGroupUncontrolled,
+                vec![group.junction_id().into(), group.id().into()],
+            )
+        })?;
+        let active_program = catalog
+            .signal_programs()
+            .iter()
+            .find(|program| program.id() == controller.active_program_id())
+            .expect("TrafficControlCatalog validates active program refs");
+        if !active_program.group_ids().contains(&group.id()) {
+            return Err(CompileError::new(
+                CompileErrorCode::SignalGroupUncontrolled,
+                vec![
+                    group.id().into(),
+                    controller.id().into(),
+                    active_program.id().into(),
+                ],
+            ));
+        }
+    }
+
+    for program in catalog.signal_programs() {
+        for phase in program.phases() {
+            let green_groups: Vec<_> = phase
+                .states()
+                .iter()
+                .filter(|state| state.indication() == SignalIndication::Green)
+                .filter_map(|state| {
+                    signal_groups
+                        .iter()
+                        .find(|group| group.signal_group_id() == state.group_id())
+                })
+                .collect();
+            for first_index in 0..green_groups.len() {
+                for second_index in first_index + 1..green_groups.len() {
+                    let first = green_groups[first_index];
+                    let second = green_groups[second_index];
+                    for first_movement in first.movement_ids() {
+                        for second_movement in second.movement_ids() {
+                            if movement_geometry.conflicts(*first_movement, *second_movement) {
+                                let mut refs = vec![
+                                    phase.id().into(),
+                                    first.signal_group_id().into(),
+                                    second.signal_group_id().into(),
+                                ];
+                                refs.extend(movement_object_refs(
+                                    movements.movement(*first_movement).expect(
+                                        "compiled signal binding references a valid movement",
+                                    ),
+                                    origins,
+                                ));
+                                refs.extend(movement_object_refs(
+                                    movements.movement(*second_movement).expect(
+                                        "compiled signal binding references a valid movement",
+                                    ),
+                                    origins,
+                                ));
+                                return Err(CompileError::new(
+                                    CompileErrorCode::SignalPhaseConflict,
+                                    refs,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let signal_programs: Vec<_> = catalog
+        .signal_programs()
+        .iter()
+        .map(|program| {
+            let phases = program
+                .phases()
+                .iter()
+                .map(|phase| {
+                    let states = phase
+                        .states()
+                        .iter()
+                        .map(|state| {
+                            let index = catalog
+                                .signal_groups()
+                                .iter()
+                                .position(|group| group.id() == state.group_id())
+                                .expect("TrafficControlCatalog validates phase group refs");
+                            CompiledSignalState::new(
+                                CompiledSignalGroupId::new(index as u32),
+                                compile_signal_indication(state.indication()),
+                            )
+                        })
+                        .collect();
+                    CompiledSignalPhase::new(
+                        phase.id(),
+                        phase.duration().get(),
+                        phase.intergreen().get(),
+                        states,
+                    )
+                })
+                .collect();
+            CompiledSignalProgram::new(program.id(), program.junction_id(), phases)
+        })
+        .collect();
+    let signal_controllers: Vec<_> = catalog
+        .controllers()
+        .iter()
+        .map(|controller| {
+            CompiledSignalController::new(
+                controller.id(),
+                controller.junction_id(),
+                controller.active_program_id(),
+            )
+        })
+        .collect();
+    CompiledControlTable::new(
+        origins.len() as u32,
+        movements.movements().len() as u32,
+        stop_positions,
+        signal_groups,
+        signal_programs,
+        signal_controllers,
+    )
+    .map_err(|_| CompileError::new(CompileErrorCode::ControlTableInvariant, Vec::new()))
+}
+
+const fn compile_signal_indication(value: SignalIndication) -> CompiledSignalIndication {
+    match value {
+        SignalIndication::Red => CompiledSignalIndication::Red,
+        SignalIndication::RedAmber => CompiledSignalIndication::RedAmber,
+        SignalIndication::Green => CompiledSignalIndication::Green,
+        SignalIndication::Amber => CompiledSignalIndication::Amber,
+        SignalIndication::Dark => CompiledSignalIndication::Dark,
+    }
+}
+
+fn compiled_lane_for_design(
+    lane_id: roadsim_types::LaneId,
+    origins: &[LaneOrigin],
+) -> Option<CompiledLaneId> {
+    origins
+        .iter()
+        .position(|origin| origin.lane_id() == lane_id)
+        .map(|index| CompiledLaneId::new(index as u32))
+}
+
 fn compile_pedestrian_graph(project: &Project) -> Result<PedestrianGraph, CompileError> {
     let mut origins: Vec<_> = project
         .design_catalog()
@@ -847,6 +1147,7 @@ fn content_hash(
     lanes: &LaneTable,
     origins: &[LaneOrigin],
     topology: &CompiledTopology,
+    controls: &CompiledControlTable,
     requirements: &CapabilityRequirements,
 ) -> Sha256Digest {
     let mut hash = Sha256::new();
@@ -920,10 +1221,62 @@ fn content_hash(
         hash.update(edge.to().get().to_le_bytes());
         hash.update(edge.crossing_id().as_uuid().as_bytes());
     }
+    hash.update((controls.stop_positions().len() as u64).to_le_bytes());
+    for position in controls.stop_positions() {
+        hash.update(position.stop_line_id().as_uuid().as_bytes());
+        hash.update(position.lane_id().get().to_le_bytes());
+        hash.update(
+            position
+                .distance_from_lane_start_m()
+                .to_bits()
+                .to_le_bytes(),
+        );
+    }
+    hash.update((controls.signal_groups().len() as u64).to_le_bytes());
+    for group in controls.signal_groups() {
+        hash.update(group.signal_group_id().as_uuid().as_bytes());
+        hash.update(group.junction_id().as_uuid().as_bytes());
+        hash.update((group.movement_ids().len() as u64).to_le_bytes());
+        for movement_id in group.movement_ids() {
+            hash.update(movement_id.get().to_le_bytes());
+        }
+    }
+    hash.update((controls.signal_programs().len() as u64).to_le_bytes());
+    for program in controls.signal_programs() {
+        hash.update(program.signal_program_id().as_uuid().as_bytes());
+        hash.update(program.junction_id().as_uuid().as_bytes());
+        hash.update((program.phases().len() as u64).to_le_bytes());
+        for phase in program.phases() {
+            hash.update(phase.signal_phase_id().as_uuid().as_bytes());
+            hash.update(phase.duration_s().to_bits().to_le_bytes());
+            hash.update(phase.intergreen_s().to_bits().to_le_bytes());
+            hash.update((phase.states().len() as u64).to_le_bytes());
+            for state in phase.states() {
+                hash.update(state.group_id().get().to_le_bytes());
+                hash.update([signal_indication_tag(state.indication())]);
+            }
+        }
+    }
+    hash.update((controls.signal_controllers().len() as u64).to_le_bytes());
+    for controller in controls.signal_controllers() {
+        hash.update(controller.signal_controller_id().as_uuid().as_bytes());
+        hash.update(controller.junction_id().as_uuid().as_bytes());
+        hash.update(controller.active_program_id().as_uuid().as_bytes());
+    }
     for capability in requirements.values() {
         hash.update([capability_tag(*capability)]);
     }
     Sha256Digest::from_bytes(hash.finalize().into())
+}
+
+const fn signal_indication_tag(value: CompiledSignalIndication) -> u8 {
+    match value {
+        CompiledSignalIndication::Red => 0,
+        CompiledSignalIndication::RedAmber => 1,
+        CompiledSignalIndication::Green => 2,
+        CompiledSignalIndication::Amber => 3,
+        CompiledSignalIndication::Dark => 4,
+    }
 }
 
 const fn lane_use_tag(value: CompiledLaneUse) -> u8 {
@@ -942,5 +1295,6 @@ const fn capability_tag(value: CapabilityId) -> u8 {
         CapabilityId::BicycleLanes => 2,
         CapabilityId::ParkingLanes => 3,
         CapabilityId::PedestrianWalkingAreasBasic => 4,
+        CapabilityId::SignalsFixedTime => 5,
     }
 }

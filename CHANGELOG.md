@@ -118,6 +118,11 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   movement centerlines в пределах одного junction, строит консервативные
   width-expanded conflict AABB и останавливается стабильной object-linked
   diagnostic при превышении явных лимитов points/segment tests.
+- CSN получила travel-oriented stop positions и полный минимальный fixed-time
+  control snapshot: signal groups привязаны к compact movements, программы
+  сохраняют authored phase order/states, а controllers — active program.
+  Compiler блокирует unbound/unresolved/duplicate movement ownership и
+  одновременно зелёные геометрически конфликтующие movements до backend.
 
 ### Changed
 
@@ -136,6 +141,12 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   `CompiledTopology`. Persisted CSN artifacts ещё не публиковались, поэтому
   runtime migration не вводится; priority/yield и SUMO junction export остаются
   отдельными последующими стадиями.
+- In-memory CSN schema повышена с v4 до v5: semantic content hash включает stop
+  positions, signal movement bindings, fixed-time programs/controllers и
+  capability `signals.fixed_time`. `CompiledNetwork::new_with_graphs` теперь
+  принимает отдельный `CompiledControlTable`. Persisted CSN artifacts всё ещё не
+  публиковались, поэтому runtime migration не вводится; SUMO TLS export остаётся
+  E10-T05 и до него capability preflight не допускает silent signal downgrade.
 
 - Worker control/data protocol повышен с v1 до v2: handshake обязательно
   публикует bounded exact engine name/version/build revision и может потребовать

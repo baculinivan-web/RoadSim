@@ -11,19 +11,24 @@ use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CorridorEnd, CorridorEndpointRef,
     CorridorSide, CrossSectionLayout, CrossSectionProfile, CrossSectionSection, Crossing,
     CrsDefinition, CrsProvenance, DemandEndpoint, DemandFlow, DemandInterval, DemandMode,
-    DemandProfile, DesignCatalog, EngineeringCrsDescriptor, EngineeringUnit, Junction,
+    DemandProfile, DesignCatalog, EngineeringCrsDescriptor, EngineeringUnit, GroupState, Junction,
     LaneDefinition, LaneDirection, LaneSlice, LaneUse, LocalOrigin, Point2Meters, Project,
     ProjectMetadata, ReferenceLine, ReferenceLineElement, ReferenceLinePose, Sidewalk,
-    StudyCatalog, VerticalDatum, WalkingArea,
+    SignalController, SignalGroup, SignalIndication, SignalMovementBinding, SignalPhase,
+    SignalProgram, StopLine, StudyCatalog, TrafficControlCatalog, VerticalDatum, WalkingArea,
 };
 use roadsim_types::{
     CoordinateMeters, CorridorId, CrossingId, DemandFlowId, DemandProfileId, DurationSeconds,
     FlowRatePerHour, HeadingRadians, JunctionId, LaneId, LengthMeters, ProjectId, SidewalkId,
-    WalkingAreaId,
+    SignalControllerId, SignalGroupId, SignalPhaseId, SignalProgramId, StopLineId, WalkingAreaId,
 };
 
 fn length(value: f64) -> LengthMeters {
     LengthMeters::try_new(value).unwrap()
+}
+
+fn duration(value: f64) -> DurationSeconds {
+    DurationSeconds::try_new(value).unwrap()
 }
 
 fn compile_options() -> CompileOptions {
@@ -116,6 +121,42 @@ fn oriented_corridor(
                     .copied()
                     .map(|lane_id| LaneSlice::new(lane_id, length(3.5)).unwrap())
                     .collect(),
+            )
+            .unwrap(),
+        )])
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+fn two_way_corridor() -> Corridor {
+    let along = LaneId::from_u128(20);
+    let against = LaneId::from_u128(21);
+    let reference_line = ReferenceLine::new(
+        ReferenceLinePose::new(point(0.0, 0.0), HeadingRadians::try_new(0.0).unwrap()),
+        vec![ReferenceLineElement::line(length(50.0)).unwrap()],
+    )
+    .unwrap();
+    Corridor::new(
+        CorridorId::from_u128(10),
+        reference_line,
+        vec![
+            LaneDefinition::new(
+                along,
+                LaneDirection::AlongReference,
+                LaneUse::GeneralTraffic,
+            ),
+            LaneDefinition::new(
+                against,
+                LaneDirection::AgainstReference,
+                LaneUse::GeneralTraffic,
+            ),
+        ],
+        CrossSectionProfile::new(vec![CrossSectionSection::new(
+            length(0.0),
+            CrossSectionLayout::new(
+                vec![LaneSlice::new(against, length(3.5)).unwrap()],
+                vec![LaneSlice::new(along, length(3.5)).unwrap()],
             )
             .unwrap(),
         )])
@@ -240,6 +281,322 @@ fn connected_corridors_compile_to_directed_lane_reachability() {
             .lane_graph()
             .can_reach(CompiledLaneId::new(1), CompiledLaneId::new(0))
     );
+}
+
+fn controlled_two_corridor_design(
+    groups: Vec<SignalGroup>,
+    bindings: Vec<SignalMovementBinding>,
+) -> DesignCatalog {
+    let group_ids: Vec<_> = groups.iter().map(|group| group.id()).collect();
+    let (programs, controllers) = if group_ids.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        let program_id = SignalProgramId::from_u128(70);
+        (
+            vec![
+                SignalProgram::new(
+                    program_id,
+                    JunctionId::from_u128(40),
+                    group_ids.clone(),
+                    vec![
+                        SignalPhase::new(
+                            SignalPhaseId::from_u128(71),
+                            duration(30.0),
+                            duration(3.0),
+                            group_ids
+                                .iter()
+                                .map(|group_id| GroupState::new(*group_id, SignalIndication::Green))
+                                .collect(),
+                        )
+                        .unwrap(),
+                        SignalPhase::new(
+                            SignalPhaseId::from_u128(73),
+                            duration(5.0),
+                            duration(0.0),
+                            group_ids
+                                .iter()
+                                .map(|group_id| GroupState::new(*group_id, SignalIndication::Red))
+                                .collect(),
+                        )
+                        .unwrap(),
+                    ],
+                )
+                .unwrap(),
+            ],
+            vec![
+                SignalController::new(
+                    SignalControllerId::from_u128(72),
+                    JunctionId::from_u128(40),
+                    vec![program_id],
+                    program_id,
+                )
+                .unwrap(),
+            ],
+        )
+    };
+    let controls = TrafficControlCatalog::new(
+        vec![],
+        vec![],
+        vec![
+            StopLine::new(
+                StopLineId::from_u128(60),
+                CorridorId::from_u128(10),
+                length(45.0),
+                vec![LaneId::from_u128(20)],
+            )
+            .unwrap(),
+        ],
+        groups,
+        vec![],
+        programs,
+        controllers,
+    )
+    .unwrap()
+    .with_signal_movement_bindings(bindings)
+    .unwrap();
+    DesignCatalog::with_multimodal(
+        vec![corridor(10, 20, 0.0), corridor(11, 21, 50.0)],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap()
+    .with_traffic_controls(controls)
+    .unwrap()
+}
+
+#[test]
+fn stop_and_signal_bindings_compile_to_compact_controls() {
+    let group_id = SignalGroupId::from_u128(50);
+    let design = controlled_two_corridor_design(
+        vec![SignalGroup::new(group_id, JunctionId::from_u128(40))],
+        vec![
+            SignalMovementBinding::new(group_id, LaneId::from_u128(20), LaneId::from_u128(21))
+                .unwrap(),
+        ],
+    );
+    let project = project_without_demand(design.clone());
+    let network = compile_project(&project, SourceRevision::new(1)).unwrap();
+    assert_eq!(network.controls().stop_positions().len(), 1);
+    assert_eq!(
+        network.controls().stop_positions()[0].lane_id(),
+        CompiledLaneId::new(0)
+    );
+    assert_eq!(
+        network.controls().stop_positions()[0].distance_from_lane_start_m(),
+        45.0
+    );
+    assert_eq!(network.controls().signal_groups().len(), 1);
+    assert_eq!(
+        network.controls().signal_groups()[0].movement_ids(),
+        &[CompiledMovementId::new(0)]
+    );
+    assert_eq!(network.controls().signal_programs().len(), 1);
+    assert_eq!(network.controls().signal_programs()[0].phases().len(), 2);
+    assert_eq!(
+        network.controls().signal_programs()[0].phases()[0].duration_s(),
+        30.0
+    );
+    assert_eq!(network.controls().signal_controllers().len(), 1);
+    assert_eq!(
+        network.controls().signal_controllers()[0].active_program_id(),
+        SignalProgramId::from_u128(70)
+    );
+    assert!(
+        network
+            .requirements()
+            .contains(CapabilityId::SignalsFixedTime)
+    );
+
+    let repeated =
+        compile_project(&project_without_demand(design), SourceRevision::new(99)).unwrap();
+    assert_eq!(network.controls(), repeated.controls());
+    assert_eq!(
+        network.header().content_hash(),
+        repeated.header().content_hash()
+    );
+}
+
+#[test]
+fn stop_positions_follow_each_lanes_travel_direction() {
+    let controls = TrafficControlCatalog::new(
+        vec![],
+        vec![],
+        vec![
+            StopLine::new(
+                StopLineId::from_u128(60),
+                CorridorId::from_u128(10),
+                length(10.0),
+                vec![LaneId::from_u128(20), LaneId::from_u128(21)],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let design = DesignCatalog::new(vec![two_way_corridor()])
+        .unwrap()
+        .with_traffic_controls(controls)
+        .unwrap();
+    let network = compile_project(&project_without_demand(design), SourceRevision::new(1)).unwrap();
+    let distance_for = |lane_id| {
+        network
+            .controls()
+            .stop_positions()
+            .iter()
+            .find(|position| network.lane_origin(position.lane_id()).unwrap().lane_id() == lane_id)
+            .unwrap()
+            .distance_from_lane_start_m()
+    };
+    assert_eq!(distance_for(LaneId::from_u128(20)), 10.0);
+    assert_eq!(distance_for(LaneId::from_u128(21)), 40.0);
+}
+
+#[test]
+fn invalid_signal_bindings_fail_before_backend_compile() {
+    let first = SignalGroupId::from_u128(50);
+    let second = SignalGroupId::from_u128(51);
+    let unbound = controlled_two_corridor_design(
+        vec![SignalGroup::new(first, JunctionId::from_u128(40))],
+        vec![],
+    );
+    let error =
+        compile_project(&project_without_demand(unbound), SourceRevision::new(1)).unwrap_err();
+    assert_eq!(error.code(), CompileErrorCode::SignalGroupUnbound);
+    assert!(error.object_refs().contains(&first.into()));
+
+    let unresolved = controlled_two_corridor_design(
+        vec![SignalGroup::new(first, JunctionId::from_u128(40))],
+        vec![
+            SignalMovementBinding::new(first, LaneId::from_u128(21), LaneId::from_u128(20))
+                .unwrap(),
+        ],
+    );
+    let error =
+        compile_project(&project_without_demand(unresolved), SourceRevision::new(1)).unwrap_err();
+    assert_eq!(error.code(), CompileErrorCode::SignalMovementUnresolved);
+    assert!(error.object_refs().contains(&LaneId::from_u128(21).into()));
+
+    let conflicting = controlled_two_corridor_design(
+        vec![
+            SignalGroup::new(first, JunctionId::from_u128(40)),
+            SignalGroup::new(second, JunctionId::from_u128(40)),
+        ],
+        vec![
+            SignalMovementBinding::new(first, LaneId::from_u128(20), LaneId::from_u128(21))
+                .unwrap(),
+            SignalMovementBinding::new(second, LaneId::from_u128(20), LaneId::from_u128(21))
+                .unwrap(),
+        ],
+    );
+    let error =
+        compile_project(&project_without_demand(conflicting), SourceRevision::new(1)).unwrap_err();
+    assert_eq!(error.code(), CompileErrorCode::SignalMovementConflict);
+    assert!(error.object_refs().contains(&first.into()));
+    assert!(error.object_refs().contains(&second.into()));
+}
+
+#[test]
+fn simultaneously_green_crossing_movements_are_rejected() {
+    let first = SignalGroupId::from_u128(50);
+    let second = SignalGroupId::from_u128(51);
+    let program_id = SignalProgramId::from_u128(70);
+    let controls = TrafficControlCatalog::new(
+        vec![],
+        vec![],
+        vec![],
+        vec![
+            SignalGroup::new(first, JunctionId::from_u128(40)),
+            SignalGroup::new(second, JunctionId::from_u128(40)),
+        ],
+        vec![],
+        vec![
+            SignalProgram::new(
+                program_id,
+                JunctionId::from_u128(40),
+                vec![first, second],
+                vec![
+                    SignalPhase::new(
+                        SignalPhaseId::from_u128(71),
+                        duration(30.0),
+                        duration(3.0),
+                        vec![
+                            GroupState::new(first, SignalIndication::Green),
+                            GroupState::new(second, SignalIndication::Green),
+                        ],
+                    )
+                    .unwrap(),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![
+            SignalController::new(
+                SignalControllerId::from_u128(72),
+                JunctionId::from_u128(40),
+                vec![program_id],
+                program_id,
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap()
+    .with_signal_movement_bindings(vec![
+        SignalMovementBinding::new(first, LaneId::from_u128(20), LaneId::from_u128(21)).unwrap(),
+        SignalMovementBinding::new(second, LaneId::from_u128(22), LaneId::from_u128(23)).unwrap(),
+    ])
+    .unwrap();
+    let design = DesignCatalog::with_multimodal(
+        vec![
+            oriented_corridor(10, &[20], -50.0, 0.0, 0.0),
+            oriented_corridor(11, &[21], 0.0, 0.0, 0.0),
+            oriented_corridor(12, &[22], 0.0, -50.0, std::f64::consts::FRAC_PI_2),
+            oriented_corridor(13, &[23], 0.0, 0.0, std::f64::consts::FRAC_PI_2),
+        ],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                    CorridorEndpointRef::new(CorridorId::from_u128(12), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(13), CorridorEnd::Start),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap()
+    .with_traffic_controls(controls)
+    .unwrap();
+    let error =
+        compile_project(&project_without_demand(design), SourceRevision::new(1)).unwrap_err();
+    assert_eq!(error.code(), CompileErrorCode::SignalPhaseConflict);
+    assert!(
+        error
+            .object_refs()
+            .contains(&SignalPhaseId::from_u128(71).into())
+    );
+    assert!(error.object_refs().contains(&first.into()));
+    assert!(error.object_refs().contains(&second.into()));
 }
 
 #[test]
