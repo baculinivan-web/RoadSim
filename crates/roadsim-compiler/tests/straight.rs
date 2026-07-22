@@ -1,6 +1,12 @@
 use proptest::prelude::*;
-use roadsim_compiled_network::{CapabilityId, CompiledLaneId, CompiledLaneUse, SourceRevision};
-use roadsim_compiler::{CompileErrorCode, compile_project};
+use roadsim_compiled_network::{
+    CapabilityId, CompiledLaneId, CompiledLaneUse, CompiledNetwork, SourceRevision,
+};
+use roadsim_compiler::{
+    CompileError, CompileErrorCode, CompileOptions, CompileOptionsErrorCode, GeometryContext,
+    MAX_CONFLICT_SEGMENT_TESTS, MAX_TOTAL_MOVEMENT_POINTS, TessellationOptions,
+    compile_project as compile_project_with_options,
+};
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CrossSectionLayout,
     CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance, DesignCatalog,
@@ -15,6 +21,60 @@ use roadsim_types::{
 
 fn length(value: f64) -> LengthMeters {
     LengthMeters::try_new(value).unwrap()
+}
+
+fn compile_options() -> CompileOptions {
+    CompileOptions::new(
+        GeometryContext::new(1.0e-9, 1.0e-12, 1.0e-12, 0.01, 100_000).unwrap(),
+        TessellationOptions::new(0.01, 16, 10_000).unwrap(),
+        8.0,
+        1_000_000,
+        1_000_000,
+    )
+    .unwrap()
+}
+
+fn compile_project(
+    project: &Project,
+    source_revision: SourceRevision,
+) -> Result<CompiledNetwork, CompileError> {
+    compile_project_with_options(project, source_revision, compile_options())
+}
+
+#[test]
+fn compile_options_reject_invalid_or_unbounded_movement_policy() {
+    let geometry = compile_options().geometry_context();
+    let tessellation = compile_options().movement_tessellation();
+    assert_eq!(
+        CompileOptions::new(geometry, tessellation, 0.0, 2, 1)
+            .unwrap_err()
+            .code(),
+        CompileOptionsErrorCode::InvalidApproachCutback
+    );
+    assert_eq!(
+        CompileOptions::new(
+            geometry,
+            tessellation,
+            1.0,
+            2,
+            MAX_CONFLICT_SEGMENT_TESTS + 1,
+        )
+        .unwrap_err()
+        .code(),
+        CompileOptionsErrorCode::InvalidConflictTestLimit
+    );
+    assert_eq!(
+        CompileOptions::new(
+            geometry,
+            tessellation,
+            1.0,
+            MAX_TOTAL_MOVEMENT_POINTS + 1,
+            1,
+        )
+        .unwrap_err()
+        .code(),
+        CompileOptionsErrorCode::InvalidMovementPointLimit
+    );
 }
 
 fn coordinates() -> CoordinateReference {
@@ -92,7 +152,7 @@ fn straight_two_way_corridor_compiles_to_oriented_lane_arrays() {
     let project = project_with_corridor(straight_corridor(100.0, 3.5, 0.0));
     let network = compile_project(&project, SourceRevision::new(7)).unwrap();
 
-    assert_eq!(network.header().schema_version(), 3);
+    assert_eq!(network.header().schema_version(), 4);
     assert_eq!(network.header().source_revision().get(), 7);
     assert_eq!(network.lanes().len(), 2);
     assert!(
@@ -131,7 +191,7 @@ fn semantic_content_hash_is_stable_across_source_revision() {
     );
     assert_eq!(
         first.header().content_hash().to_string(),
-        "0c7218f2b46eae84eae767bede2bac50e3b029dfe7f9ec2f0ecb752dcaf764a9"
+        "d7c7c7a36d6376b936038e0259c134a49d40464db8e47500a032c5d1069cb589"
     );
 }
 

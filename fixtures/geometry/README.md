@@ -27,6 +27,12 @@ E04-T05 partial fixture там же использует симметричны�
 точкой `t=0.5`, проверяет exact endpoints, увеличение числа derived points при
 ужесточении chord error и явный отказ при исчерпании depth limit.
 
+E07-T06 использует generated локально-метрический fixture четырёх
+перпендикулярных one-lane approaches в
+`crates/roadsim-compiler/tests/graphs.rs`. Он проверяет exact connector controls,
+известную crossing pair, symmetric lookup, revision-independent geometry и
+bounded failure paths. Внешних данных и отдельных license obligations нет.
+
 При добавлении fixture рядом должен быть указан источник, лицензия, units,
 ожидаемый результат и процедура осознанного обновления. Golden output нельзя
 перезаписывать обычным test run.

@@ -4,8 +4,9 @@ use roadsim_backend_sumo::{
 };
 use roadsim_compiled_network::{
     CapabilityId, CapabilityRequirements, CompiledLaneId, CompiledLaneUse, CompiledMovement,
-    CompiledNetwork, CompiledNetworkHeader, CompiledPoint, LaneAdjacency, LaneGraph, LaneOrigin,
-    LaneTable, MovementTable, PedestrianGraph, SourceRevision,
+    CompiledMovementCurve, CompiledMovementId, CompiledNetwork, CompiledNetworkHeader,
+    CompiledPoint, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
+    MovementGeometryTable, MovementTable, PedestrianGraph, SourceRevision,
 };
 use roadsim_types::{CorridorId, JunctionId, LaneId, Sha256Digest};
 use std::{path::PathBuf, process::Command};
@@ -61,9 +62,23 @@ fn network_with_movement() -> CompiledNetwork {
             LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(11)),
             LaneOrigin::new(CorridorId::from_u128(20), LaneId::from_u128(21)),
         ],
-        LaneGraph::new(2, vec![LaneAdjacency::new(from, to, junction_id)]).unwrap(),
-        MovementTable::new(2, vec![CompiledMovement::new(from, to, junction_id)]).unwrap(),
-        PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+        CompiledTopology::new(
+            LaneGraph::new(2, vec![LaneAdjacency::new(from, to, junction_id)]).unwrap(),
+            MovementTable::new(2, vec![CompiledMovement::new(from, to, junction_id)]).unwrap(),
+            MovementGeometryTable::new(
+                1,
+                vec![CompiledMovementCurve::new(
+                    CompiledMovementId::new(0),
+                    CompiledPoint::new(90.0, 0.0),
+                    CompiledPoint::new(100.0, 0.0),
+                    CompiledPoint::new(100.0, 0.0),
+                    CompiledPoint::new(110.0, 0.0),
+                )],
+                Vec::new(),
+            )
+            .unwrap(),
+            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+        ),
         CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
     )
     .unwrap()

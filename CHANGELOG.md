@@ -110,6 +110,11 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   IDs. Compiler выводит однозначные lane-to-lane движения из junction approaches
   и блокирует неоднозначный выбор нескольких полос одного target corridor с
   object-linked diagnostic вместо неявной эвристики.
+- CSN получила exact cubic connector curves, bounded derived tessellation и
+  sparse symmetric conflict matrix. Compiler находит crossing/overlap между
+  movement centerlines в пределах одного junction, строит консервативные
+  width-expanded conflict AABB и останавливается стабильной object-linked
+  diagnostic при превышении явных лимитов points/segment tests.
 
 ### Changed
 
@@ -122,6 +127,12 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   по-прежнему не публиковались, поэтому runtime migration не вводится. Straight
   SUMO exporter явно отклоняет movements до E10-T04 вместо silent topology
   downgrade.
+- In-memory CSN schema повышена с v3 до v4: semantic content hash включает exact
+  movement curves и conflict zones, `compile_project` требует явный numerical/
+  resource policy, а `CompiledNetwork::new_with_graphs` принимает сгруппированный
+  `CompiledTopology`. Persisted CSN artifacts ещё не публиковались, поэтому
+  runtime migration не вводится; priority/yield и SUMO junction export остаются
+  отдельными последующими стадиями.
 
 - Worker control/data protocol повышен с v1 до v2: handshake обязательно
   публикует bounded exact engine name/version/build revision и может потребовать

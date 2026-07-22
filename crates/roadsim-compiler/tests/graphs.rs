@@ -1,9 +1,12 @@
 use proptest::prelude::*;
 use roadsim_compiled_network::{
-    CapabilityId, CompiledLaneId, CompiledMovementId, LaneAdjacency, LaneGraph,
+    CapabilityId, CompiledLaneId, CompiledMovementId, CompiledNetwork, LaneAdjacency, LaneGraph,
     PedestrianNodeOrigin, SourceRevision,
 };
-use roadsim_compiler::{CompileErrorCode, compile_project};
+use roadsim_compiler::{
+    CompileError, CompileErrorCode, CompileOptions, GeometryContext, TessellationOptions,
+    compile_project as compile_project_with_options,
+};
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CorridorEnd, CorridorEndpointRef,
     CorridorSide, CrossSectionLayout, CrossSectionProfile, CrossSectionSection, Crossing,
@@ -21,6 +24,24 @@ use roadsim_types::{
 
 fn length(value: f64) -> LengthMeters {
     LengthMeters::try_new(value).unwrap()
+}
+
+fn compile_options() -> CompileOptions {
+    CompileOptions::new(
+        GeometryContext::new(1.0e-9, 1.0e-12, 1.0e-12, 0.01, 100_000).unwrap(),
+        TessellationOptions::new(0.01, 16, 10_000).unwrap(),
+        8.0,
+        1_000_000,
+        1_000_000,
+    )
+    .unwrap()
+}
+
+fn compile_project(
+    project: &Project,
+    source_revision: SourceRevision,
+) -> Result<CompiledNetwork, CompileError> {
+    compile_project_with_options(project, source_revision, compile_options())
 }
 
 fn point(x: f64, y: f64) -> Point2Meters {
@@ -53,9 +74,22 @@ fn corridor(id: u128, lane_id: u128, start_x: f64) -> Corridor {
 }
 
 fn corridor_with_lanes(id: u128, lane_ids: &[u128], start_x: f64) -> Corridor {
+    oriented_corridor(id, lane_ids, start_x, 0.0, 0.0)
+}
+
+fn oriented_corridor(
+    id: u128,
+    lane_ids: &[u128],
+    start_x: f64,
+    start_y: f64,
+    heading_rad: f64,
+) -> Corridor {
     let lane_ids: Vec<_> = lane_ids.iter().copied().map(LaneId::from_u128).collect();
     let reference_line = ReferenceLine::new(
-        ReferenceLinePose::new(point(start_x, 0.0), HeadingRadians::try_new(0.0).unwrap()),
+        ReferenceLinePose::new(
+            point(start_x, start_y),
+            HeadingRadians::try_new(heading_rad).unwrap(),
+        ),
         vec![ReferenceLineElement::line(length(50.0)).unwrap()],
     )
     .unwrap();
@@ -247,6 +281,159 @@ fn one_lane_approaches_infer_stable_merge_and_diverge_movements() {
     assert_eq!(movements[2].to(), CompiledLaneId::new(1));
     assert_eq!(movements[3].from(), CompiledLaneId::new(3));
     assert_eq!(movements[3].to(), CompiledLaneId::new(2));
+    assert_eq!(network.movement_geometry().curves().len(), 4);
+}
+
+#[test]
+fn perpendicular_movements_compile_curves_and_crossing_matrix() {
+    let design = DesignCatalog::with_multimodal(
+        vec![
+            oriented_corridor(10, &[20], -50.0, 0.0, 0.0),
+            oriented_corridor(11, &[21], 0.0, 0.0, 0.0),
+            oriented_corridor(12, &[22], 0.0, -50.0, std::f64::consts::FRAC_PI_2),
+            oriented_corridor(13, &[23], 0.0, 0.0, std::f64::consts::FRAC_PI_2),
+        ],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                    CorridorEndpointRef::new(CorridorId::from_u128(12), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(13), CorridorEnd::Start),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let project = project_without_demand(design.clone());
+    let network = compile_project(&project, SourceRevision::new(1)).unwrap();
+    let geometry = network.movement_geometry();
+
+    assert_eq!(geometry.curves().len(), 4);
+    let west_to_east = geometry.curve(CompiledMovementId::new(0)).unwrap();
+    assert_eq!(west_to_east.start().x_m(), -8.0);
+    assert_eq!(west_to_east.start().y_m(), -1.75);
+    assert_eq!(west_to_east.end().x_m(), 8.0);
+    assert_eq!(west_to_east.end().y_m(), -1.75);
+    assert!(geometry.conflicts(CompiledMovementId::new(0), CompiledMovementId::new(3)));
+    let crossing = geometry
+        .conflict_zones()
+        .iter()
+        .find(|zone| {
+            zone.first() == CompiledMovementId::new(0)
+                && zone.second() == CompiledMovementId::new(3)
+        })
+        .unwrap();
+    assert!(crossing.min().x_m() < 1.75 && crossing.max().x_m() > 1.75);
+    assert!(crossing.min().y_m() < -1.75 && crossing.max().y_m() > -1.75);
+
+    let repeated = compile_project_with_options(
+        &project_without_demand(design.clone()),
+        SourceRevision::new(99),
+        compile_options(),
+    )
+    .unwrap();
+    assert_eq!(network.movement_geometry(), repeated.movement_geometry());
+
+    let base_options = compile_options();
+    let shorter_cutback = CompileOptions::new(
+        base_options.geometry_context(),
+        base_options.movement_tessellation(),
+        4.0,
+        base_options.max_total_movement_points(),
+        base_options.max_conflict_segment_tests(),
+    )
+    .unwrap();
+    let shorter = compile_project_with_options(
+        &project_without_demand(design.clone()),
+        SourceRevision::new(1),
+        shorter_cutback,
+    )
+    .unwrap();
+    assert_ne!(
+        network.header().content_hash(),
+        shorter.header().content_hash()
+    );
+    assert_eq!(
+        shorter
+            .movement_geometry()
+            .curve(CompiledMovementId::new(0))
+            .unwrap()
+            .start()
+            .x_m(),
+        -4.0
+    );
+
+    let constrained = CompileOptions::new(
+        base_options.geometry_context(),
+        base_options.movement_tessellation(),
+        base_options.approach_cutback_m(),
+        base_options.max_total_movement_points(),
+        1,
+    )
+    .unwrap();
+    let error = compile_project_with_options(
+        &project_without_demand(design),
+        SourceRevision::new(1),
+        constrained,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.code(),
+        CompileErrorCode::MovementConflictLimitExceeded
+    );
+    assert!(
+        error
+            .object_refs()
+            .contains(&JunctionId::from_u128(40).into())
+    );
+
+    let point_limited = CompileOptions::new(
+        base_options.geometry_context(),
+        base_options.movement_tessellation(),
+        base_options.approach_cutback_m(),
+        2,
+        base_options.max_conflict_segment_tests(),
+    )
+    .unwrap();
+    let error = compile_project_with_options(
+        &project_without_demand(
+            DesignCatalog::with_multimodal(
+                vec![
+                    oriented_corridor(10, &[20], -50.0, 0.0, 0.0),
+                    oriented_corridor(11, &[21], 0.0, 0.0, std::f64::consts::FRAC_PI_2),
+                ],
+                vec![
+                    Junction::new(
+                        JunctionId::from_u128(40),
+                        vec![
+                            CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                            CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                        ],
+                    )
+                    .unwrap(),
+                ],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        ),
+        SourceRevision::new(1),
+        point_limited,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.code(),
+        CompileErrorCode::MovementGeometryLimitExceeded
+    );
 }
 
 #[test]

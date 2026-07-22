@@ -342,8 +342,15 @@ semantic movements `(from lane, to lane, junction)` с детерминиров�
 ID. Разные target corridors считаются отдельными допустимыми направлениями, но
 несколько target lanes одного corridor для одной source lane требуют явного
 lane-assignment intent и до его появления блокируют compile с object evidence.
-Compiler не угадывает такой выбор по геометрии. Movement curves, conflict zones
-и priority relations остаются отдельной стадией и не входят в этот контракт.
+Compiler не угадывает такой выбор по геометрии. Следующая стадия задаёт для
+каждого movement exact cubic control polygon с явным approach cutback; bounded
+tessellation используется только как derived representation. Пересечения и
+overlap центральных линий внутри одного junction формируют детерминированную
+sparse symmetric conflict matrix и консервативные AABB, расширенные на половину
+меньшей ширины connector. Эта первая реализация не обнаруживает близкие swept
+areas без пересечения centerlines. Numerical tolerances и resource limits
+передаются в compiler явно; priority/yield relations не выводятся из геометрии и
+остаются отдельной стадией.
 
 ### 8.3. Capability requirements
 

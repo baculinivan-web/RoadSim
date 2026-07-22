@@ -1,5 +1,5 @@
 use roadsim_compiled_network::{CompiledNetwork, SourceRevision};
-use roadsim_compiler::compile_project;
+use roadsim_compiler::{CompileOptions, GeometryContext, TessellationOptions, compile_project};
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CrossSectionLayout,
     CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance, DesignCatalog,
@@ -80,5 +80,14 @@ pub fn compiled_network() -> Result<CompiledNetwork, String> {
         coordinate_reference,
         DesignCatalog::new(vec![corridor]).map_err(|error| error.to_string())?,
     );
-    compile_project(&project, SourceRevision::new(0)).map_err(|error| error.to_string())
+    let options = CompileOptions::new(
+        GeometryContext::new(1.0e-6, 1.0e-9, 1.0e-9, 0.05, 100_000)
+            .map_err(|error| error.to_string())?,
+        TessellationOptions::new(0.02, 16, 10_000).map_err(|error| error.to_string())?,
+        8.0,
+        1_000_000,
+        1_000_000,
+    )
+    .map_err(|error| error.to_string())?;
+    compile_project(&project, SourceRevision::new(0), options).map_err(|error| error.to_string())
 }

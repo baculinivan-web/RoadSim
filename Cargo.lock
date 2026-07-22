@@ -1653,6 +1653,7 @@ dependencies = [
  "proptest",
  "roadsim-compiled-network",
  "roadsim-domain",
+ "roadsim-geometry",
  "roadsim-types",
  "sha2",
 ]

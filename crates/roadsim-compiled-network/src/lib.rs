@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::{collections::BTreeSet, error::Error, fmt};
 
 /// Schema of the in-memory CSN contract.
-pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 3;
+pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 4;
 pub const MAX_GRAPH_NODES: u32 = 1_000_000;
 pub const MAX_GRAPH_EDGES: usize = 4_000_000;
 
@@ -345,6 +345,285 @@ impl fmt::Display for MovementError {
 }
 
 impl Error for MovementError {}
+
+/// Exact cubic control polygon for one junction movement.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CompiledMovementCurve {
+    movement_id: CompiledMovementId,
+    start: CompiledPoint,
+    control_1: CompiledPoint,
+    control_2: CompiledPoint,
+    end: CompiledPoint,
+}
+
+impl CompiledMovementCurve {
+    #[must_use]
+    pub const fn new(
+        movement_id: CompiledMovementId,
+        start: CompiledPoint,
+        control_1: CompiledPoint,
+        control_2: CompiledPoint,
+        end: CompiledPoint,
+    ) -> Self {
+        Self {
+            movement_id,
+            start,
+            control_1,
+            control_2,
+            end,
+        }
+    }
+
+    #[must_use]
+    pub const fn movement_id(self) -> CompiledMovementId {
+        self.movement_id
+    }
+
+    #[must_use]
+    pub const fn start(self) -> CompiledPoint {
+        self.start
+    }
+
+    #[must_use]
+    pub const fn control_1(self) -> CompiledPoint {
+        self.control_1
+    }
+
+    #[must_use]
+    pub const fn control_2(self) -> CompiledPoint {
+        self.control_2
+    }
+
+    #[must_use]
+    pub const fn end(self) -> CompiledPoint {
+        self.end
+    }
+}
+
+/// Geometric reason two movement centerlines produce one conflict zone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompiledConflictKind {
+    Crossing,
+    Overlap,
+}
+
+/// Conservative local-metric AABB around one pair's geometric conflict sites.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CompiledConflictZone {
+    first: CompiledMovementId,
+    second: CompiledMovementId,
+    kind: CompiledConflictKind,
+    min: CompiledPoint,
+    max: CompiledPoint,
+}
+
+impl CompiledConflictZone {
+    pub fn new(
+        first: CompiledMovementId,
+        second: CompiledMovementId,
+        kind: CompiledConflictKind,
+        min: CompiledPoint,
+        max: CompiledPoint,
+    ) -> Result<Self, MovementGeometryError> {
+        if first >= second {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::ConflictPairNotCanonical,
+            ));
+        }
+        if !point_is_finite(min)
+            || !point_is_finite(max)
+            || min.x_m() >= max.x_m()
+            || min.y_m() >= max.y_m()
+        {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::ConflictBoundsInvalid,
+            ));
+        }
+        Ok(Self {
+            first,
+            second,
+            kind,
+            min,
+            max,
+        })
+    }
+
+    #[must_use]
+    pub const fn first(self) -> CompiledMovementId {
+        self.first
+    }
+
+    #[must_use]
+    pub const fn second(self) -> CompiledMovementId {
+        self.second
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> CompiledConflictKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn min(self) -> CompiledPoint {
+        self.min
+    }
+
+    #[must_use]
+    pub const fn max(self) -> CompiledPoint {
+        self.max
+    }
+}
+
+/// Deterministic movement curves and sparse symmetric conflict matrix.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MovementGeometryTable {
+    movement_count: u32,
+    curves: Vec<CompiledMovementCurve>,
+    conflict_zones: Vec<CompiledConflictZone>,
+}
+
+impl MovementGeometryTable {
+    pub fn new(
+        movement_count: u32,
+        mut curves: Vec<CompiledMovementCurve>,
+        mut conflict_zones: Vec<CompiledConflictZone>,
+    ) -> Result<Self, MovementGeometryError> {
+        if movement_count as usize > MAX_GRAPH_EDGES {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::TooManyMovements,
+            ));
+        }
+        if curves.len() != movement_count as usize {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::CurveCountMismatch,
+            ));
+        }
+        curves.sort_by_key(|curve| curve.movement_id());
+        if curves.iter().enumerate().any(|(index, curve)| {
+            curve.movement_id().get() as usize != index
+                || !point_is_finite(curve.start())
+                || !point_is_finite(curve.control_1())
+                || !point_is_finite(curve.control_2())
+                || !point_is_finite(curve.end())
+        }) {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::CurveInvalid,
+            ));
+        }
+        if conflict_zones.len() > MAX_GRAPH_EDGES {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::TooManyConflicts,
+            ));
+        }
+        conflict_zones.sort_by_key(|zone| (zone.first(), zone.second()));
+        for zone in &conflict_zones {
+            if zone.second().get() >= movement_count {
+                return Err(MovementGeometryError(
+                    MovementGeometryErrorCode::ConflictMovementOutsideTable,
+                ));
+            }
+        }
+        if conflict_zones
+            .windows(2)
+            .any(|pair| pair[0].first() == pair[1].first() && pair[0].second() == pair[1].second())
+        {
+            return Err(MovementGeometryError(
+                MovementGeometryErrorCode::DuplicateConflictPair,
+            ));
+        }
+        Ok(Self {
+            movement_count,
+            curves,
+            conflict_zones,
+        })
+    }
+
+    #[must_use]
+    pub const fn movement_count(&self) -> u32 {
+        self.movement_count
+    }
+
+    #[must_use]
+    pub fn curves(&self) -> &[CompiledMovementCurve] {
+        &self.curves
+    }
+
+    #[must_use]
+    pub fn curve(&self, id: CompiledMovementId) -> Option<CompiledMovementCurve> {
+        self.curves.get(id.get() as usize).copied()
+    }
+
+    #[must_use]
+    pub fn conflict_zones(&self) -> &[CompiledConflictZone] {
+        &self.conflict_zones
+    }
+
+    #[must_use]
+    pub fn conflicts(&self, first: CompiledMovementId, second: CompiledMovementId) -> bool {
+        if first == second {
+            return false;
+        }
+        let pair = if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        self.conflict_zones
+            .binary_search_by_key(&pair, |zone| (zone.first(), zone.second()))
+            .is_ok()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MovementGeometryErrorCode {
+    TooManyMovements,
+    CurveCountMismatch,
+    CurveInvalid,
+    TooManyConflicts,
+    ConflictPairNotCanonical,
+    ConflictMovementOutsideTable,
+    ConflictBoundsInvalid,
+    DuplicateConflictPair,
+}
+
+impl MovementGeometryErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TooManyMovements => "csn.movement_geometry.movements.too_many",
+            Self::CurveCountMismatch => "csn.movement_geometry.curves.count_mismatch",
+            Self::CurveInvalid => "csn.movement_geometry.curve.invalid",
+            Self::TooManyConflicts => "csn.movement_geometry.conflicts.too_many",
+            Self::ConflictPairNotCanonical => "csn.conflict.pair.not_canonical",
+            Self::ConflictMovementOutsideTable => "csn.conflict.movement.outside_table",
+            Self::ConflictBoundsInvalid => "csn.conflict.bounds.invalid",
+            Self::DuplicateConflictPair => "csn.conflict.pair.duplicate",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MovementGeometryError(MovementGeometryErrorCode);
+
+impl MovementGeometryError {
+    #[must_use]
+    pub const fn code(self) -> MovementGeometryErrorCode {
+        self.0
+    }
+}
+
+impl fmt::Display for MovementGeometryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+impl Error for MovementGeometryError {}
+
+fn point_is_finite(point: CompiledPoint) -> bool {
+    point.x_m().is_finite() && point.y_m().is_finite()
+}
 
 /// Compact pedestrian graph node ID.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -769,6 +1048,7 @@ pub enum NetworkErrorCode {
     LaneGraphLengthMismatch,
     MovementTableLengthMismatch,
     MovementGraphMismatch,
+    MovementGeometryCountMismatch,
     GraphLimitExceeded,
 }
 
@@ -780,6 +1060,7 @@ impl NetworkErrorCode {
             Self::LaneGraphLengthMismatch => "csn.lane_graph.length_mismatch",
             Self::MovementTableLengthMismatch => "csn.movement_table.length_mismatch",
             Self::MovementGraphMismatch => "csn.movement_graph.mismatch",
+            Self::MovementGeometryCountMismatch => "csn.movement_geometry.count_mismatch",
             Self::GraphLimitExceeded => "csn.graph.limit_exceeded",
         }
     }
@@ -803,15 +1084,59 @@ impl fmt::Display for NetworkError {
 
 impl Error for NetworkError {}
 
+/// Backend-independent topology grouped as one constructor boundary.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompiledTopology {
+    lane_graph: LaneGraph,
+    movements: MovementTable,
+    movement_geometry: MovementGeometryTable,
+    pedestrian_graph: PedestrianGraph,
+}
+
+impl CompiledTopology {
+    #[must_use]
+    pub const fn new(
+        lane_graph: LaneGraph,
+        movements: MovementTable,
+        movement_geometry: MovementGeometryTable,
+        pedestrian_graph: PedestrianGraph,
+    ) -> Self {
+        Self {
+            lane_graph,
+            movements,
+            movement_geometry,
+            pedestrian_graph,
+        }
+    }
+
+    #[must_use]
+    pub const fn lane_graph(&self) -> &LaneGraph {
+        &self.lane_graph
+    }
+
+    #[must_use]
+    pub const fn movements(&self) -> &MovementTable {
+        &self.movements
+    }
+
+    #[must_use]
+    pub const fn movement_geometry(&self) -> &MovementGeometryTable {
+        &self.movement_geometry
+    }
+
+    #[must_use]
+    pub const fn pedestrian_graph(&self) -> &PedestrianGraph {
+        &self.pedestrian_graph
+    }
+}
+
 /// Complete immutable network published atomically after successful compilation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CompiledNetwork {
     header: CompiledNetworkHeader,
     lanes: LaneTable,
     lane_origins: Vec<LaneOrigin>,
-    lane_graph: LaneGraph,
-    movements: MovementTable,
-    pedestrian_graph: PedestrianGraph,
+    topology: CompiledTopology,
     requirements: CapabilityRequirements,
 }
 
@@ -826,15 +1151,15 @@ impl CompiledNetwork {
             .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
         let movements = MovementTable::new(lanes.len() as u32, Vec::new())
             .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
+        let movement_geometry = MovementGeometryTable::new(0, Vec::new(), Vec::new())
+            .map_err(|_| NetworkError(NetworkErrorCode::GraphLimitExceeded))?;
         let pedestrian_graph =
             PedestrianGraph::new(Vec::new(), Vec::new()).expect("empty graph is valid");
         Self::new_with_graphs(
             header,
             lanes,
             lane_origins,
-            lane_graph,
-            movements,
-            pedestrian_graph,
+            CompiledTopology::new(lane_graph, movements, movement_geometry, pedestrian_graph),
             requirements,
         )
     }
@@ -843,22 +1168,28 @@ impl CompiledNetwork {
         header: CompiledNetworkHeader,
         lanes: LaneTable,
         lane_origins: Vec<LaneOrigin>,
-        lane_graph: LaneGraph,
-        movements: MovementTable,
-        pedestrian_graph: PedestrianGraph,
+        topology: CompiledTopology,
         requirements: CapabilityRequirements,
     ) -> Result<Self, NetworkError> {
         if lanes.len() != lane_origins.len() {
             return Err(NetworkError(NetworkErrorCode::SourceMapLengthMismatch));
         }
-        if lanes.len() != lane_graph.node_count() as usize {
+        if lanes.len() != topology.lane_graph().node_count() as usize {
             return Err(NetworkError(NetworkErrorCode::LaneGraphLengthMismatch));
         }
-        if lanes.len() != movements.lane_count() as usize {
+        if lanes.len() != topology.movements().lane_count() as usize {
             return Err(NetworkError(NetworkErrorCode::MovementTableLengthMismatch));
         }
-        if movements.movements().iter().any(|movement| {
-            lane_graph
+        if topology.movements().movements().len()
+            != topology.movement_geometry().movement_count() as usize
+        {
+            return Err(NetworkError(
+                NetworkErrorCode::MovementGeometryCountMismatch,
+            ));
+        }
+        if topology.movements().movements().iter().any(|movement| {
+            topology
+                .lane_graph()
                 .adjacency()
                 .binary_search(&LaneAdjacency::new(
                     movement.from(),
@@ -873,9 +1204,7 @@ impl CompiledNetwork {
             header,
             lanes,
             lane_origins,
-            lane_graph,
-            movements,
-            pedestrian_graph,
+            topology,
             requirements,
         })
     }
@@ -897,17 +1226,22 @@ impl CompiledNetwork {
 
     #[must_use]
     pub const fn lane_graph(&self) -> &LaneGraph {
-        &self.lane_graph
+        self.topology.lane_graph()
     }
 
     #[must_use]
     pub const fn movements(&self) -> &MovementTable {
-        &self.movements
+        self.topology.movements()
+    }
+
+    #[must_use]
+    pub const fn movement_geometry(&self) -> &MovementGeometryTable {
+        self.topology.movement_geometry()
     }
 
     #[must_use]
     pub const fn pedestrian_graph(&self) -> &PedestrianGraph {
-        &self.pedestrian_graph
+        self.topology.pedestrian_graph()
     }
 
     #[must_use]
@@ -1060,6 +1394,57 @@ mod tests {
     }
 
     #[test]
+    fn movement_geometry_assigns_curves_and_symmetric_conflict_matrix() {
+        let curves = vec![
+            CompiledMovementCurve::new(
+                CompiledMovementId::new(1),
+                CompiledPoint::new(0.0, -1.0),
+                CompiledPoint::new(1.0, -1.0),
+                CompiledPoint::new(1.0, 0.0),
+                CompiledPoint::new(1.0, 1.0),
+            ),
+            CompiledMovementCurve::new(
+                CompiledMovementId::new(0),
+                CompiledPoint::new(-1.0, 0.0),
+                CompiledPoint::new(0.0, 0.0),
+                CompiledPoint::new(0.0, 0.0),
+                CompiledPoint::new(1.0, 0.0),
+            ),
+        ];
+        let zone = CompiledConflictZone::new(
+            CompiledMovementId::new(0),
+            CompiledMovementId::new(1),
+            CompiledConflictKind::Crossing,
+            CompiledPoint::new(-1.0, -1.0),
+            CompiledPoint::new(1.0, 1.0),
+        )
+        .unwrap();
+        let geometry = MovementGeometryTable::new(2, curves, vec![zone]).unwrap();
+
+        assert_eq!(
+            geometry.curve(CompiledMovementId::new(0)).unwrap().start(),
+            CompiledPoint::new(-1.0, 0.0)
+        );
+        assert!(geometry.conflicts(CompiledMovementId::new(0), CompiledMovementId::new(1)));
+        assert!(geometry.conflicts(CompiledMovementId::new(1), CompiledMovementId::new(0)));
+        assert!(!geometry.conflicts(CompiledMovementId::new(0), CompiledMovementId::new(0)));
+
+        let invalid = MovementGeometryTable::new(
+            1,
+            vec![CompiledMovementCurve::new(
+                CompiledMovementId::new(1),
+                CompiledPoint::new(0.0, 0.0),
+                CompiledPoint::new(1.0, 0.0),
+                CompiledPoint::new(2.0, 0.0),
+                CompiledPoint::new(3.0, 0.0),
+            )],
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert_eq!(invalid.code(), MovementGeometryErrorCode::CurveInvalid);
+    }
+
+    #[test]
     fn network_requires_every_movement_to_have_a_coarse_graph_edge() {
         let lanes = LaneTable::new(
             vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(1.0, 0.0)],
@@ -1097,9 +1482,23 @@ mod tests {
                 LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(20)),
                 LaneOrigin::new(CorridorId::from_u128(11), LaneId::from_u128(21)),
             ],
-            lane_graph,
-            movements,
-            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+            CompiledTopology::new(
+                lane_graph,
+                movements,
+                MovementGeometryTable::new(
+                    1,
+                    vec![CompiledMovementCurve::new(
+                        CompiledMovementId::new(0),
+                        CompiledPoint::new(0.0, 0.0),
+                        CompiledPoint::new(0.25, 0.0),
+                        CompiledPoint::new(0.75, 0.0),
+                        CompiledPoint::new(1.0, 0.0),
+                    )],
+                    Vec::new(),
+                )
+                .unwrap(),
+                PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+            ),
             CapabilityRequirements::default(),
         )
         .unwrap_err();
@@ -1134,9 +1533,12 @@ mod tests {
                 LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(20)),
                 LaneOrigin::new(CorridorId::from_u128(11), LaneId::from_u128(21)),
             ],
-            lane_graph,
-            MovementTable::new(2, Vec::new()).unwrap(),
-            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+            CompiledTopology::new(
+                lane_graph,
+                MovementTable::new(2, Vec::new()).unwrap(),
+                MovementGeometryTable::new(0, Vec::new(), Vec::new()).unwrap(),
+                PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+            ),
             CapabilityRequirements::default(),
         )
         .unwrap();

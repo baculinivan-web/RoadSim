@@ -399,7 +399,16 @@ semantic lane-to-lane movements и требует backing edge в coarse lane gr
 каждого movement. Compiler поддерживает однозначные one-lane merge/diverge и
 блокирует несколько target lanes одного corridor для одной source lane кодом
 `compiler.movement.ambiguous` со ссылками на junction, corridors и lanes. Явный
-lane-assignment intent, movement curves, conflicts и priority остаются E07-T06.
+lane-assignment intent остаётся будущим расширением movement inference.
+
+Статус E07-T06: 🟢 CSN schema v4 содержит exact cubic curve для каждого
+movement и sparse symmetric conflict matrix. Compiler использует явные geometry/
+tessellation/resource options, ограничивает total derived points и segment-pair
+tests, а для crossing/overlap centerlines строит width-expanded conflict AABB.
+Перпендикулярный четырёхподходный fixture проверяет известную пару, стабильность
+между revisions и failure при исчерпании лимитов. Swept-area proximity без
+пересечения centerlines и priority/yield не заявлены этой стадией; последнее
+остаётся E10-T04.
 
 ## 16. Epic E08 — Нормативный движок RU
 

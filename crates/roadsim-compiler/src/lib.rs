@@ -1,27 +1,142 @@
 //! Deterministic Design Model to Compiled Simulation Network pipeline.
 //!
-//! The first vertical slice accepts straight corridors with one constant cross
-//! section. Unsupported geometry is rejected with a stable diagnostic instead
-//! of being simplified silently.
+//! The current vertical slice accepts straight corridors with one constant cross
+//! section and compiles exact cubic junction movement connectors. Unsupported
+//! geometry is rejected with a stable diagnostic instead of being simplified
+//! silently.
 
 use roadsim_compiled_network::{
-    COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledLaneId,
-    CompiledLaneUse, CompiledMovement, CompiledNetwork, CompiledNetworkHeader,
-    CompiledPedestrianNodeId, CompiledPoint, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
-    MAX_GRAPH_EDGES, MovementTable, PedestrianAdjacency, PedestrianGraph, PedestrianNodeOrigin,
-    SourceRevision,
+    COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledConflictKind,
+    CompiledConflictZone, CompiledLaneId, CompiledLaneUse, CompiledMovement, CompiledMovementCurve,
+    CompiledMovementId, CompiledNetwork, CompiledNetworkHeader, CompiledPedestrianNodeId,
+    CompiledPoint, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
+    MAX_GRAPH_EDGES, MovementGeometryTable, MovementTable, PedestrianAdjacency, PedestrianGraph,
+    PedestrianNodeOrigin, SourceRevision,
 };
 use roadsim_domain::{
-    Corridor, CorridorEnd, DemandEndpoint, DemandMode, LaneDirection, LaneSlice, LaneUse, Project,
-    ReferenceLineElementKind,
+    Corridor, CorridorEnd, DemandEndpoint, DemandMode, LaneDirection, LaneSlice, LaneUse,
+    Point2Meters, Project, ReferenceLineElementKind,
 };
-use roadsim_types::{ObjectRef, Sha256Digest};
+use roadsim_geometry::{
+    CubicBezier2, Segment2, SegmentIntersection, segment_intersection, tessellate_cubic,
+};
+pub use roadsim_geometry::{GeometryContext, TessellationOptions};
+use roadsim_types::{CoordinateMeters, ObjectRef, Sha256Digest};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
 };
+
+pub const MAX_CONFLICT_SEGMENT_TESTS: u64 = 10_000_000;
+pub const MAX_TOTAL_MOVEMENT_POINTS: u64 = 10_000_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompileOptionsErrorCode {
+    InvalidApproachCutback,
+    InvalidMovementPointLimit,
+    InvalidConflictTestLimit,
+}
+
+impl CompileOptionsErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidApproachCutback => "compiler.options.approach_cutback.invalid",
+            Self::InvalidMovementPointLimit => "compiler.options.movement_points.invalid",
+            Self::InvalidConflictTestLimit => "compiler.options.conflict_tests.invalid",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompileOptionsError(CompileOptionsErrorCode);
+
+impl CompileOptionsError {
+    #[must_use]
+    pub const fn code(self) -> CompileOptionsErrorCode {
+        self.0
+    }
+}
+
+impl fmt::Display for CompileOptionsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+impl Error for CompileOptionsError {}
+
+/// Explicit numerical and resource policy for deterministic compilation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CompileOptions {
+    geometry_context: GeometryContext,
+    movement_tessellation: TessellationOptions,
+    approach_cutback_m: f64,
+    max_total_movement_points: u64,
+    max_conflict_segment_tests: u64,
+}
+
+impl CompileOptions {
+    pub fn new(
+        geometry_context: GeometryContext,
+        movement_tessellation: TessellationOptions,
+        approach_cutback_m: f64,
+        max_total_movement_points: u64,
+        max_conflict_segment_tests: u64,
+    ) -> Result<Self, CompileOptionsError> {
+        if !approach_cutback_m.is_finite() || approach_cutback_m <= 0.0 {
+            return Err(CompileOptionsError(
+                CompileOptionsErrorCode::InvalidApproachCutback,
+            ));
+        }
+        if !(2..=MAX_TOTAL_MOVEMENT_POINTS).contains(&max_total_movement_points) {
+            return Err(CompileOptionsError(
+                CompileOptionsErrorCode::InvalidMovementPointLimit,
+            ));
+        }
+        if max_conflict_segment_tests == 0
+            || max_conflict_segment_tests > MAX_CONFLICT_SEGMENT_TESTS
+        {
+            return Err(CompileOptionsError(
+                CompileOptionsErrorCode::InvalidConflictTestLimit,
+            ));
+        }
+        Ok(Self {
+            geometry_context,
+            movement_tessellation,
+            approach_cutback_m,
+            max_total_movement_points,
+            max_conflict_segment_tests,
+        })
+    }
+
+    #[must_use]
+    pub const fn geometry_context(self) -> GeometryContext {
+        self.geometry_context
+    }
+
+    #[must_use]
+    pub const fn movement_tessellation(self) -> TessellationOptions {
+        self.movement_tessellation
+    }
+
+    #[must_use]
+    pub const fn approach_cutback_m(self) -> f64 {
+        self.approach_cutback_m
+    }
+
+    #[must_use]
+    pub const fn max_total_movement_points(self) -> u64 {
+        self.max_total_movement_points
+    }
+
+    #[must_use]
+    pub const fn max_conflict_segment_tests(self) -> u64 {
+        self.max_conflict_segment_tests
+    }
+}
 
 /// Stable compilation failure classifications.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +148,10 @@ pub enum CompileErrorCode {
     LaneGraphInvariant,
     MovementAmbiguous,
     MovementInvariant,
+    MovementGeometryDegenerate,
+    MovementGeometryInvariant,
+    MovementGeometryLimitExceeded,
+    MovementConflictLimitExceeded,
     PedestrianGraphInvariant,
     DemandEndpointUnreachable,
     DemandModeUnsupported,
@@ -52,6 +171,10 @@ impl CompileErrorCode {
             Self::LaneGraphInvariant => "compiler.lane_graph.invariant",
             Self::MovementAmbiguous => "compiler.movement.ambiguous",
             Self::MovementInvariant => "compiler.movement.invariant",
+            Self::MovementGeometryDegenerate => "compiler.movement_geometry.degenerate",
+            Self::MovementGeometryInvariant => "compiler.movement_geometry.invariant",
+            Self::MovementGeometryLimitExceeded => "compiler.movement_geometry.limit_exceeded",
+            Self::MovementConflictLimitExceeded => "compiler.movement_conflict.limit_exceeded",
             Self::PedestrianGraphInvariant => "compiler.pedestrian_graph.invariant",
             Self::DemandEndpointUnreachable => "compiler.demand.endpoint_unreachable",
             Self::DemandModeUnsupported => "compiler.demand.mode_unsupported",
@@ -107,6 +230,7 @@ struct LaneBuilder {
 pub fn compile_project(
     project: &Project,
     source_revision: SourceRevision,
+    options: CompileOptions,
 ) -> Result<CompiledNetwork, CompileError> {
     let mut builder = LaneBuilder::default();
     for corridor in project.design_catalog().corridors() {
@@ -123,6 +247,8 @@ pub fn compile_project(
         .ok_or_else(|| CompileError::new(CompileErrorCode::LaneTableInvariant, Vec::new()))?;
     let lane_graph = compile_lane_graph(project, &builder.origins, lanes.len())?;
     let movements = compile_movements(&builder.origins, &lane_graph)?;
+    let movement_geometry =
+        compile_movement_geometry(&lanes, &builder.origins, &movements, options)?;
     let pedestrian_graph = compile_pedestrian_graph(project)?;
     if !pedestrian_graph.origins().is_empty() {
         builder
@@ -131,22 +257,14 @@ pub fn compile_project(
     }
     validate_demand_reachability(project, &builder.origins, &lane_graph, &pedestrian_graph)?;
     let requirements = CapabilityRequirements::new(builder.requirements);
-    let hash = content_hash(
-        project,
-        &lanes,
-        &builder.origins,
-        &lane_graph,
-        &movements,
-        &pedestrian_graph,
-        &requirements,
-    );
+    let topology =
+        CompiledTopology::new(lane_graph, movements, movement_geometry, pedestrian_graph);
+    let hash = content_hash(project, &lanes, &builder.origins, &topology, &requirements);
     CompiledNetwork::new_with_graphs(
         CompiledNetworkHeader::new(source_revision, hash),
         lanes,
         builder.origins,
-        lane_graph,
-        movements,
-        pedestrian_graph,
+        topology,
         requirements,
     )
     .map_err(|_| CompileError::new(CompileErrorCode::NetworkInvariant, Vec::new()))
@@ -365,6 +483,241 @@ fn compile_movements(
         .map_err(|_| CompileError::new(CompileErrorCode::MovementInvariant, Vec::new()))
 }
 
+struct MovementCurveWork {
+    movement: CompiledMovement,
+    polyline: Vec<Point2Meters>,
+    width_m: f64,
+}
+
+fn compile_movement_geometry(
+    lanes: &LaneTable,
+    origins: &[LaneOrigin],
+    movements: &MovementTable,
+    options: CompileOptions,
+) -> Result<MovementGeometryTable, CompileError> {
+    let mut curves = Vec::with_capacity(movements.movements().len());
+    let mut work = Vec::with_capacity(movements.movements().len());
+    let mut total_points = 0_u64;
+    for (index, movement) in movements.movements().iter().copied().enumerate() {
+        let movement_id = CompiledMovementId::new(index as u32);
+        let source = lanes
+            .lane(movement.from())
+            .expect("MovementTable validates source lane IDs");
+        let destination = lanes
+            .lane(movement.to())
+            .expect("MovementTable validates target lane IDs");
+        let source_direction = (
+            source.end().x_m() - source.start().x_m(),
+            source.end().y_m() - source.start().y_m(),
+        );
+        let destination_direction = (
+            destination.end().x_m() - destination.start().x_m(),
+            destination.end().y_m() - destination.start().y_m(),
+        );
+        let source_length = libm::hypot(source_direction.0, source_direction.1);
+        let destination_length = libm::hypot(destination_direction.0, destination_direction.1);
+        let cutback = options
+            .approach_cutback_m()
+            .min(0.5 * source_length)
+            .min(0.5 * destination_length);
+        if cutback <= options.geometry_context().distance_tolerance_m() {
+            return Err(CompileError::new(
+                CompileErrorCode::MovementGeometryDegenerate,
+                movement_object_refs(movement, origins),
+            ));
+        }
+        let source_tangent = (
+            source_direction.0 / source_length,
+            source_direction.1 / source_length,
+        );
+        let destination_tangent = (
+            destination_direction.0 / destination_length,
+            destination_direction.1 / destination_length,
+        );
+        let start = CompiledPoint::new(
+            source.end().x_m() - source_tangent.0 * cutback,
+            source.end().y_m() - source_tangent.1 * cutback,
+        );
+        let end = CompiledPoint::new(
+            destination.start().x_m() + destination_tangent.0 * cutback,
+            destination.start().y_m() + destination_tangent.1 * cutback,
+        );
+        let compiled_curve =
+            CompiledMovementCurve::new(movement_id, start, source.end(), destination.start(), end);
+        let geometry_curve = CubicBezier2::new(
+            geometry_point(start),
+            geometry_point(source.end()),
+            geometry_point(destination.start()),
+            geometry_point(end),
+        );
+        let polyline = tessellate_cubic(
+            geometry_curve,
+            options.movement_tessellation(),
+            options.geometry_context(),
+        )
+        .map_err(|_| {
+            CompileError::new(
+                CompileErrorCode::MovementGeometryInvariant,
+                movement_object_refs(movement, origins),
+            )
+        })?;
+        total_points = total_points
+            .checked_add(polyline.len() as u64)
+            .ok_or_else(|| {
+                CompileError::new(
+                    CompileErrorCode::MovementGeometryLimitExceeded,
+                    movement_object_refs(movement, origins),
+                )
+            })?;
+        if total_points > options.max_total_movement_points() {
+            return Err(CompileError::new(
+                CompileErrorCode::MovementGeometryLimitExceeded,
+                movement_object_refs(movement, origins),
+            ));
+        }
+        curves.push(compiled_curve);
+        work.push(MovementCurveWork {
+            movement,
+            polyline,
+            width_m: source.width_m().min(destination.width_m()),
+        });
+    }
+    let conflict_zones = compile_conflict_zones(&work, origins, options)?;
+    MovementGeometryTable::new(movements.movements().len() as u32, curves, conflict_zones)
+        .map_err(|_| CompileError::new(CompileErrorCode::MovementGeometryInvariant, Vec::new()))
+}
+
+fn compile_conflict_zones(
+    work: &[MovementCurveWork],
+    origins: &[LaneOrigin],
+    options: CompileOptions,
+) -> Result<Vec<CompiledConflictZone>, CompileError> {
+    let mut zones = Vec::new();
+    let mut tested_segments = 0_u64;
+    let mut by_junction = BTreeMap::<_, Vec<usize>>::new();
+    for (index, movement) in work.iter().enumerate() {
+        by_junction
+            .entry(movement.movement.junction_id())
+            .or_default()
+            .push(index);
+    }
+    for movement_indices in by_junction.values() {
+        for first_position in 0..movement_indices.len() {
+            for second_position in first_position + 1..movement_indices.len() {
+                let first_index = movement_indices[first_position];
+                let second_index = movement_indices[second_position];
+                let first = &work[first_index];
+                let second = &work[second_index];
+                let pair_tests = (first.polyline.len().saturating_sub(1) as u64)
+                    .checked_mul(second.polyline.len().saturating_sub(1) as u64)
+                    .ok_or_else(|| conflict_limit_error(first, second, origins))?;
+                tested_segments = tested_segments
+                    .checked_add(pair_tests)
+                    .ok_or_else(|| conflict_limit_error(first, second, origins))?;
+                if tested_segments > options.max_conflict_segment_tests() {
+                    return Err(conflict_limit_error(first, second, origins));
+                }
+
+                let mut bounds: Option<(f64, f64, f64, f64)> = None;
+                let mut kind = CompiledConflictKind::Crossing;
+                for first_segment in first.polyline.windows(2) {
+                    for second_segment in second.polyline.windows(2) {
+                        let intersection = segment_intersection(
+                            Segment2::new(first_segment[0], first_segment[1]),
+                            Segment2::new(second_segment[0], second_segment[1]),
+                            options.geometry_context(),
+                        )
+                        .map_err(|_| {
+                            CompileError::new(
+                                CompileErrorCode::MovementGeometryInvariant,
+                                conflict_object_refs(first, second, origins),
+                            )
+                        })?;
+                        match intersection {
+                            SegmentIntersection::None => {}
+                            SegmentIntersection::Point(point) => update_bounds(&mut bounds, point),
+                            SegmentIntersection::Overlap(segment) => {
+                                kind = CompiledConflictKind::Overlap;
+                                update_bounds(&mut bounds, segment.start());
+                                update_bounds(&mut bounds, segment.end());
+                            }
+                        }
+                    }
+                }
+                if let Some((min_x, min_y, max_x, max_y)) = bounds {
+                    let half_width = 0.5 * first.width_m.min(second.width_m);
+                    let zone = CompiledConflictZone::new(
+                        CompiledMovementId::new(first_index as u32),
+                        CompiledMovementId::new(second_index as u32),
+                        kind,
+                        CompiledPoint::new(min_x - half_width, min_y - half_width),
+                        CompiledPoint::new(max_x + half_width, max_y + half_width),
+                    )
+                    .map_err(|_| {
+                        CompileError::new(
+                            CompileErrorCode::MovementGeometryInvariant,
+                            conflict_object_refs(first, second, origins),
+                        )
+                    })?;
+                    zones.push(zone);
+                }
+            }
+        }
+    }
+    Ok(zones)
+}
+
+fn update_bounds(bounds: &mut Option<(f64, f64, f64, f64)>, point: Point2Meters) {
+    let x = point.x_m().get();
+    let y = point.y_m().get();
+    *bounds = Some(match *bounds {
+        Some((min_x, min_y, max_x, max_y)) => {
+            (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+        }
+        None => (x, y, x, y),
+    });
+}
+
+fn geometry_point(point: CompiledPoint) -> Point2Meters {
+    Point2Meters::new(
+        CoordinateMeters::try_new(point.x_m()).expect("LaneTable validates finite coordinates"),
+        CoordinateMeters::try_new(point.y_m()).expect("LaneTable validates finite coordinates"),
+    )
+}
+
+fn movement_object_refs(movement: CompiledMovement, origins: &[LaneOrigin]) -> Vec<ObjectRef> {
+    let source = origins[movement.from().get() as usize];
+    let destination = origins[movement.to().get() as usize];
+    vec![
+        movement.junction_id().into(),
+        source.corridor_id().into(),
+        source.lane_id().into(),
+        destination.corridor_id().into(),
+        destination.lane_id().into(),
+    ]
+}
+
+fn conflict_object_refs(
+    first: &MovementCurveWork,
+    second: &MovementCurveWork,
+    origins: &[LaneOrigin],
+) -> Vec<ObjectRef> {
+    let mut refs = movement_object_refs(first.movement, origins);
+    refs.extend(movement_object_refs(second.movement, origins));
+    refs
+}
+
+fn conflict_limit_error(
+    first: &MovementCurveWork,
+    second: &MovementCurveWork,
+    origins: &[LaneOrigin],
+) -> CompileError {
+    CompileError::new(
+        CompileErrorCode::MovementConflictLimitExceeded,
+        conflict_object_refs(first, second, origins),
+    )
+}
+
 fn compile_pedestrian_graph(project: &Project) -> Result<PedestrianGraph, CompileError> {
     let mut origins: Vec<_> = project
         .design_catalog()
@@ -493,9 +846,7 @@ fn content_hash(
     project: &Project,
     lanes: &LaneTable,
     origins: &[LaneOrigin],
-    lane_graph: &LaneGraph,
-    movements: &MovementTable,
-    pedestrian_graph: &PedestrianGraph,
+    topology: &CompiledTopology,
     requirements: &CapabilityRequirements,
 ) -> Sha256Digest {
     let mut hash = Sha256::new();
@@ -512,20 +863,46 @@ fn content_hash(
         hash.update(origin.corridor_id().as_uuid().as_bytes());
         hash.update(origin.lane_id().as_uuid().as_bytes());
     }
-    hash.update((lane_graph.adjacency().len() as u64).to_le_bytes());
-    for edge in lane_graph.adjacency() {
+    hash.update((topology.lane_graph().adjacency().len() as u64).to_le_bytes());
+    for edge in topology.lane_graph().adjacency() {
         hash.update(edge.from().get().to_le_bytes());
         hash.update(edge.to().get().to_le_bytes());
         hash.update(edge.junction_id().as_uuid().as_bytes());
     }
-    hash.update((movements.movements().len() as u64).to_le_bytes());
-    for movement in movements.movements() {
+    hash.update((topology.movements().movements().len() as u64).to_le_bytes());
+    for movement in topology.movements().movements() {
         hash.update(movement.from().get().to_le_bytes());
         hash.update(movement.to().get().to_le_bytes());
         hash.update(movement.junction_id().as_uuid().as_bytes());
     }
-    hash.update((pedestrian_graph.origins().len() as u64).to_le_bytes());
-    for origin in pedestrian_graph.origins() {
+    hash.update((topology.movement_geometry().curves().len() as u64).to_le_bytes());
+    for curve in topology.movement_geometry().curves() {
+        hash.update(curve.movement_id().get().to_le_bytes());
+        for point in [
+            curve.start(),
+            curve.control_1(),
+            curve.control_2(),
+            curve.end(),
+        ] {
+            hash.update(point.x_m().to_bits().to_le_bytes());
+            hash.update(point.y_m().to_bits().to_le_bytes());
+        }
+    }
+    hash.update((topology.movement_geometry().conflict_zones().len() as u64).to_le_bytes());
+    for zone in topology.movement_geometry().conflict_zones() {
+        hash.update(zone.first().get().to_le_bytes());
+        hash.update(zone.second().get().to_le_bytes());
+        hash.update([match zone.kind() {
+            CompiledConflictKind::Crossing => 0,
+            CompiledConflictKind::Overlap => 1,
+        }]);
+        hash.update(zone.min().x_m().to_bits().to_le_bytes());
+        hash.update(zone.min().y_m().to_bits().to_le_bytes());
+        hash.update(zone.max().x_m().to_bits().to_le_bytes());
+        hash.update(zone.max().y_m().to_bits().to_le_bytes());
+    }
+    hash.update((topology.pedestrian_graph().origins().len() as u64).to_le_bytes());
+    for origin in topology.pedestrian_graph().origins() {
         match origin {
             PedestrianNodeOrigin::WalkingArea(id) => {
                 hash.update([0]);
@@ -537,8 +914,8 @@ fn content_hash(
             }
         }
     }
-    hash.update((pedestrian_graph.adjacency().len() as u64).to_le_bytes());
-    for edge in pedestrian_graph.adjacency() {
+    hash.update((topology.pedestrian_graph().adjacency().len() as u64).to_le_bytes());
+    for edge in topology.pedestrian_graph().adjacency() {
         hash.update(edge.from().get().to_le_bytes());
         hash.update(edge.to().get().to_le_bytes());
         hash.update(edge.crossing_id().as_uuid().as_bytes());
