@@ -1,4 +1,3 @@
-use crate::demo;
 use roadsim_application::{RunOrchestrator, RunOutcome, RunRequest, RunState};
 use roadsim_backend_api::{
     BackendArtifact, BackendEvent, CompileOptions, ControlCommand, ControlKind, FrameBatch,
@@ -83,8 +82,7 @@ pub struct SimulationController {
 }
 
 impl SimulationController {
-    pub fn new(auto_start: bool) -> Result<Self, SimulationError> {
-        let network = Arc::new(demo::compiled_network().map_err(SimulationError)?);
+    pub fn new(network: Arc<CompiledNetwork>, auto_start: bool) -> Result<Self, SimulationError> {
         let backend = FakeBackend::new();
         let scenario = ScenarioSnapshot::new(DEMO_SCENARIO_HASH, DEMO_AGENT_COUNT)
             .map_err(|error| SimulationError(error.to_string()))?;
@@ -124,6 +122,41 @@ impl SimulationController {
             }
         }
         Ok(controller)
+    }
+
+    /// Swaps in a newly compiled network while no run is active.
+    ///
+    /// The old artifact and history are released: a new artifact means a new
+    /// run lifecycle, so the orchestrator restarts from `Prepared`.
+    pub fn replace_network(
+        &mut self,
+        network: Arc<CompiledNetwork>,
+    ) -> Result<(), SimulationError> {
+        if matches!(
+            self.state(),
+            UiSimulationState::Running | UiSimulationState::Paused
+        ) {
+            return Err(SimulationError("app.simulation.run_active".to_owned()));
+        }
+        let scenario = ScenarioSnapshot::new(DEMO_SCENARIO_HASH, DEMO_AGENT_COUNT)
+            .map_err(|error| SimulationError(error.to_string()))?;
+        let artifact = pollster::block_on(self.backend.compile(
+            network.clone(),
+            scenario,
+            CompileOptions,
+        ))
+        .map_err(|error| SimulationError(error.to_string()))?;
+        let mut orchestrator = RunOrchestrator::new();
+        orchestrator
+            .request(RunRequest::Prepare)
+            .map_err(|error| SimulationError(error.code().as_str().to_owned()))?;
+        self.artifact = artifact;
+        self.network = network;
+        self.orchestrator = orchestrator;
+        self.session = None;
+        self.frame = None;
+        self.error_code = None;
+        Ok(())
     }
 
     #[must_use]
@@ -318,7 +351,8 @@ mod tests {
 
     #[test]
     fn controller_runs_observable_frames_and_controls_lifecycle() {
-        let mut controller = SimulationController::new(false).unwrap();
+        let network = std::sync::Arc::new(crate::demo::compiled_network().unwrap());
+        let mut controller = SimulationController::new(network, false).unwrap();
         assert_eq!(controller.state(), UiSimulationState::Ready);
         controller.start();
         controller.advance();
@@ -345,8 +379,24 @@ mod tests {
     }
 
     #[test]
+    fn replace_network_is_refused_while_a_run_is_active() {
+        let network = std::sync::Arc::new(crate::demo::compiled_network().unwrap());
+        let mut controller = SimulationController::new(network.clone(), false).unwrap();
+        controller.start();
+        assert!(controller.replace_network(network.clone()).is_err());
+        controller.stop();
+        controller.replace_network(network).unwrap();
+        assert_eq!(controller.state(), UiSimulationState::Ready);
+        controller.start();
+        controller.advance();
+        controller.advance();
+        assert_eq!(controller.state(), UiSimulationState::Running);
+    }
+
+    #[test]
     fn smoke_auto_start_observes_a_frame_after_two_advances() {
-        let mut controller = SimulationController::new(true).unwrap();
+        let network = std::sync::Arc::new(crate::demo::compiled_network().unwrap());
+        let mut controller = SimulationController::new(network, true).unwrap();
         controller.advance();
         controller.advance();
         let observation = controller.observation();

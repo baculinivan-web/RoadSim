@@ -11,7 +11,27 @@ use roadsim_types::{
     CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId,
 };
 
-pub fn compiled_network() -> Result<CompiledNetwork, String> {
+/// Compiles any Design project with the demo's numerical policy.
+pub fn compile(project: &Project) -> Result<CompiledNetwork, String> {
+    let options = CompileOptions::new(
+        GeometryContext::new(1.0e-6, 1.0e-9, 1.0e-9, 0.05, 100_000)
+            .map_err(|error| error.to_string())?,
+        TessellationOptions::new(0.02, 16, 10_000).map_err(|error| error.to_string())?,
+        8.0,
+        1_000_000,
+        1_000_000,
+    )
+    .map_err(|error| error.to_string())?;
+    compile_project(
+        project,
+        SourceRevision::new(project.design_catalog().corridors().len() as u64),
+        options,
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Builds the deterministic straight-road demo Design project.
+pub fn project() -> Result<Project, String> {
     let corridor_id = CorridorId::from_u128(0x100);
     let left_lane_id = LaneId::from_u128(0x101);
     let right_lane_id = LaneId::from_u128(0x102);
@@ -73,21 +93,16 @@ pub fn compiled_network() -> Result<CompiledNetwork, String> {
         CrsProvenance::new("built-in demo", "identity", "east-north")
             .map_err(|error| error.to_string())?,
     );
-    let project = Project::with_catalog(
+    Ok(Project::with_catalog(
         ProjectId::from_u128(0x10),
         ProjectMetadata::new("Deterministic straight-road demo")
             .map_err(|error| error.to_string())?,
         coordinate_reference,
         DesignCatalog::new(vec![corridor]).map_err(|error| error.to_string())?,
-    );
-    let options = CompileOptions::new(
-        GeometryContext::new(1.0e-6, 1.0e-9, 1.0e-9, 0.05, 100_000)
-            .map_err(|error| error.to_string())?,
-        TessellationOptions::new(0.02, 16, 10_000).map_err(|error| error.to_string())?,
-        8.0,
-        1_000_000,
-        1_000_000,
-    )
-    .map_err(|error| error.to_string())?;
-    compile_project(&project, SourceRevision::new(0), options).map_err(|error| error.to_string())
+    ))
+}
+
+#[cfg(test)]
+pub fn compiled_network() -> Result<CompiledNetwork, String> {
+    compile(&project()?)
 }

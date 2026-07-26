@@ -365,6 +365,15 @@ meshes и instanced/performance acceptance E05-T04…T08 ещё не реали�
 
 **M2 exit:** пользователь рисует четырехподходный skeleton, задает полосы, размещает переход, undo/redo, сохраняет и открывает проект. Performance baseline зафиксирован на reference hardware.
 
+Статус E06-T03/T08 (частично): 🟡 desktop shell редактирует demo Design Model
+только через typed commands: object tree перечисляет реальные corridors,
+инспектор меняет ширину полосы кнопочными шагами (один клик — одна undoable
+команда), дороги добавляются/удаляются `CreateCorridor`/`DeleteCorridor`, а
+undo/redo идут через `CommandHistory` с восстановлением semantic content hash
+(покрыто тестом round-trip). Успешная команда перекомпилирует CSN и подменяет
+simulation artifact только при неактивном run. Полные draw tools, tool state
+machine и property inspector общего вида остаются E06-T04…T07.
+
 ## 15. Epic E07 — Компилятор CSN
 
 **Цель:** получить детерминированный backend-independent snapshot.

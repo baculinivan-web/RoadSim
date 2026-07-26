@@ -1,4 +1,5 @@
 mod demo;
+mod editor;
 mod shell;
 mod simulation;
 

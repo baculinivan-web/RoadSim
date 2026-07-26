@@ -1,3 +1,4 @@
+use crate::editor::EditorState;
 use crate::simulation::{SimulationController, SimulationObservation, UiSimulationState};
 use egui::{Color32, Pos2, Rect, Stroke, Vec2};
 use egui_wgpu::{RendererOptions, WgpuConfiguration, winit::Painter};
@@ -206,6 +207,7 @@ struct WindowShell {
     egui_state: egui_winit::State,
     painter: Painter,
     simulation: SimulationController,
+    editor: EditorState,
 }
 
 impl WindowShell {
@@ -228,15 +230,19 @@ impl WindowShell {
         ));
         pollster::block_on(painter.set_window(egui::ViewportId::ROOT, Some(window.clone())))
             .map_err(|error| ShellError::new(format!("GPU initialization failed: {error}")))?;
-        let simulation = SimulationController::new(auto_start).map_err(|error| {
-            ShellError::new(format!("simulation initialization failed: {error}"))
-        })?;
+        let editor = EditorState::new()
+            .map_err(|error| ShellError::new(format!("editor initialization failed: {error}")))?;
+        let simulation =
+            SimulationController::new(editor.network().clone(), auto_start).map_err(|error| {
+                ShellError::new(format!("simulation initialization failed: {error}"))
+            })?;
         Ok(Self {
             window,
             egui_context,
             egui_state,
             painter,
             simulation,
+            editor,
         })
     }
 
@@ -271,8 +277,9 @@ impl WindowShell {
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let scale_factor = self.window.scale_factor();
         let simulation = &mut self.simulation;
+        let editor = &mut self.editor;
         let full_output = self.egui_context.run(raw_input, |context| {
-            draw_shell(context, scale_factor, simulation);
+            draw_shell(context, scale_factor, simulation, editor);
         });
         self.egui_state
             .handle_platform_output(&self.window, full_output.platform_output);
@@ -292,7 +299,19 @@ impl WindowShell {
     }
 }
 
-fn draw_shell(context: &egui::Context, scale_factor: f64, simulation: &mut SimulationController) {
+fn draw_shell(
+    context: &egui::Context,
+    scale_factor: f64,
+    simulation: &mut SimulationController,
+    editor: &mut EditorState,
+) {
+    // Editing is a model mutation, so it is disabled while a run is active:
+    // the running artifact must keep matching the network on screen.
+    let run_active = matches!(
+        simulation.state(),
+        UiSimulationState::Running | UiSimulationState::Paused
+    );
+    let network_revision_before = editor.revision();
     egui::TopBottomPanel::top("top_bar")
         .exact_height(42.0)
         .show(context, |ui| {
@@ -323,10 +342,52 @@ fn draw_shell(context: &egui::Context, scale_factor: f64, simulation: &mut Simul
             egui::CollapsingHeader::new("Проект")
                 .default_open(true)
                 .show(ui, |ui| {
-                    let _ = ui.selectable_label(true, "▰ Demo corridor");
-                    ui.label("↳ Lane 0101 · reverse");
-                    ui.label("↳ Lane 0102 · forward");
+                    for corridor_id in editor.corridor_ids() {
+                        ui.horizontal(|ui| {
+                            let short = corridor_id.as_uuid().simple().to_string();
+                            let _ = ui.selectable_label(true, format!("▰ Дорога {}", &short[..8]));
+                            if editor.corridor_ids().len() > 1
+                                && ui
+                                    .add_enabled(!run_active, egui::Button::new("✕").small())
+                                    .on_hover_text("Удалить дорогу")
+                                    .clicked()
+                            {
+                                editor.delete_corridor(corridor_id);
+                            }
+                        });
+                    }
                 });
+            ui.add_space(8.0);
+            if ui
+                .add_enabled(!run_active, egui::Button::new("＋ Дорога"))
+                .clicked()
+            {
+                editor.add_parallel_road();
+            }
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !run_active && editor.can_undo(),
+                        egui::Button::new("↶ Undo"),
+                    )
+                    .clicked()
+                {
+                    editor.undo();
+                }
+                if ui
+                    .add_enabled(
+                        !run_active && editor.can_redo(),
+                        egui::Button::new("↷ Redo"),
+                    )
+                    .clicked()
+                {
+                    editor.redo();
+                }
+            });
+            ui.small(format!("revision {}", editor.revision()));
+            if let Some(code) = editor.error_code() {
+                ui.colored_label(Color32::from_rgb(235, 99, 99), code);
+            }
             ui.add_space(12.0);
             ui.small("Валидный Design Model → immutable CSN. UI не изменяет модель.");
         });
@@ -337,20 +398,30 @@ fn draw_shell(context: &egui::Context, scale_factor: f64, simulation: &mut Simul
         .show(context, |ui| {
             ui.heading("Инспектор");
             ui.separator();
-            ui.label("Demo corridor");
+            ui.label("Полосы (ширина, м)");
+            // One button click is one gesture, i.e. one undoable command.
             egui::Grid::new("properties")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
+                .num_columns(4)
+                .spacing([8.0, 6.0])
                 .show(ui, |ui| {
-                    ui.label("Длина");
-                    ui.label("120.0 m");
-                    ui.end_row();
-                    ui.label("Полосы");
-                    ui.label("2");
-                    ui.end_row();
-                    ui.label("Режим");
-                    ui.label("Compiled CSN");
-                    ui.end_row();
+                    for row in editor.lane_rows() {
+                        let lane_short = row.lane_id.as_uuid().simple().to_string();
+                        ui.label(lane_short[..8].to_owned());
+                        ui.label(format!("{:.2}", row.width_m));
+                        if ui
+                            .add_enabled(!run_active, egui::Button::new("−").small())
+                            .clicked()
+                        {
+                            editor.set_lane_width(row.corridor_id, row.lane_id, row.width_m - 0.25);
+                        }
+                        if ui
+                            .add_enabled(!run_active, egui::Button::new("＋").small())
+                            .clicked()
+                        {
+                            editor.set_lane_width(row.corridor_id, row.lane_id, row.width_m + 0.25);
+                        }
+                        ui.end_row();
+                    }
                 });
             ui.add_space(16.0);
             ui.label("Симуляция");
@@ -409,6 +480,15 @@ fn draw_shell(context: &egui::Context, scale_factor: f64, simulation: &mut Simul
                 ));
             });
         });
+
+    if editor.revision() != network_revision_before
+        && editor.error_code().is_none()
+        && simulation
+            .replace_network(editor.network().clone())
+            .is_err()
+    {
+        // The refusal is already surfaced through the simulation error code.
+    }
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(Color32::from_rgb(15, 21, 27)))
