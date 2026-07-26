@@ -154,6 +154,11 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   `begin`/`end`/`vehsPerHour`; `SumoFlowMapping` хранит обратное отображение.
   Non-car режимы и demand, скомпилированный против другой сети, отклоняются.
 
+- Зафиксирован пробел Design Model, блокирующий пешеходный SUMO export
+  (ADR-023): между `WalkingArea` и `Sidewalk` нет typed связи, поэтому endpoint
+  для `walk` нельзя построить без геометрической догадки. Экспорт продолжает
+  явно отклонять пешеходную сеть и pedestrian demand.
+
 ### Changed
 
 - SUMO plain-network export contract повышен с v2 до v3: bundle содержит

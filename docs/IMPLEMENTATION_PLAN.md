@@ -589,6 +589,16 @@ arrival process и rate не выдумываются, — и сохраняет
 через exported junction и требует непустой visual frame — это исполняемое
 доказательство M4 для автомобильного сценария.
 
+Статус E10-T07: ⛔ заблокирована. SUMO выражает пешехода как `<personFlow>` со
+стадиями `walk` между edges, а authored demand задан между walking areas. В
+Design Model нет ни одного typed reference между `WalkingArea` и `Sidewalk`
+(crossing связывает две walking areas, sidewalk знает только corridor/side/
+station), поэтому построить endpoint для `walk` можно лишь геометрической
+догадкой, меняющей маршруты и метрики UC-03. Пробел зафиксирован в ADR-023;
+задача ждёт follow-up к E01-T06, который добавит связь «walking area ↔
+pedestrian edge». До этого экспорт продолжает отклонять непустой pedestrian
+graph и pedestrian demand явными кодами.
+
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует
 отсортированный protocol-v3 SoA frame через отдельный latest-wins writer, не
