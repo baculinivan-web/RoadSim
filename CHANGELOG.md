@@ -124,8 +124,73 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   Compiler блокирует unbound/unresolved/duplicate movement ownership и
   одновременно зелёные геометрически конфликтующие movements до backend.
 
+- SUMO export теперь переводит compiled junction movements в полный explicit
+  connection table: одно movement — ровно одна `<connection>`, узел с movements
+  получает `type="priority"`, а `SUMO_NETCONVERT_INPUT_ARGUMENTS` отключает
+  turnarounds и эвристические связи netconvert. `SumoConnectionMapping`
+  сохраняет `CompiledMovementId → JunctionId → SUMO edge/lane`. Неполный набор
+  movements, разорванные endpoints и один узел с двумя junction ID блокируются
+  object-linked diagnostics; pedestrian graph и traffic controls отклоняются
+  явными кодами вместо молчаливого удаления. ADR-022 фиксирует, что RoadSim не
+  выдумывает junction priority, а right-of-way между зафиксированными связями
+  считает pinned `netconvert 1.27.1`.
+
+- SUMO export переводит активную fixed-time программу каждого контроллера в
+  `roadsim.tll.xml`: `<tlLogic type="static">` с сохранённым порядком фаз,
+  длительностями и per-group indication, узел `type="traffic_light"`, связи с
+  `tl`/`linkIndex` в compact movement order и `SumoSignalMapping` для обратного
+  отображения. Movement сигнализированного узла без группы, контроллер
+  неизвестного узла и authored `intergreen > 0` отклоняются стабильными кодами;
+  трактовка clearance между amber и all-red остаётся за domain owner.
+
+- Добавлен backend-independent compiled demand contract (`CompiledDemandTable`,
+  schema v1) и `compile_demand`: authored corridor endpoints резолвятся в
+  единственную boundary lane опубликованной CSN, а неизвестный профиль,
+  неоднозначный endpoint, недостижимая пара и нецелевой mode блокируются
+  object-linked diagnostics. Спрос остаётся состоянием сценария и не входит в
+  CSN.
+- SUMO export переводит compiled demand в `roadsim.rou.xml`: один `<vType>` с
+  явными габаритами и по одному `<flow>` на authored interval с сохранёнными
+  `begin`/`end`/`vehsPerHour`; `SumoFlowMapping` хранит обратное отображение.
+  Non-car режимы и demand, скомпилированный против другой сети, отклоняются.
+
+- Зафиксирован пробел Design Model, блокирующий пешеходный SUMO export
+  (ADR-023): между `WalkingArea` и `Sidewalk` нет typed связи, поэтому endpoint
+  для `walk` нельзя построить без геометрической догадки. Экспорт продолжает
+  явно отклонять пешеходную сеть и pedestrian demand.
+
+- Добавлен `roadsim-application` с backend-agnostic `RunOrchestrator`: полный
+  lifecycle одного run, единственный terminal outcome, перезапуск из terminal
+  состояния и стабильные диагностики вместо panic на невозможном переходе.
+  State machine не выполняет I/O и возвращает caller ровно один `RunIntent`.
+- Desktop shell берёт enablement кнопок симуляции из оркестратора, поэтому UI
+  не предлагает переход, который run отклонит.
+
+- Добавлен `FrameSnapshotAdapter`: backend frame переводится в GPU-ready SoA с
+  переиспользуемыми буферами и явным bound по числу агентов; отклонённый кадр
+  не разрушает предыдущий snapshot, а backend agent/lane ID сохраняются.
+
 ### Changed
 
+- SUMO plain-network export contract повышен с v2 до v3: bundle содержит
+  четвёртый документ `roadsim.tll.xml`, `SUMO_NETCONVERT_INPUT_ARGUMENTS`
+  включает `--tllogic-files`, а общий код
+  `backend.sumo.traffic_controls.unsupported` заменён на
+  `backend.sumo.stop_positions.unsupported`,
+  `backend.sumo.signal_intergreen.unsupported`,
+  `backend.sumo.signal_movement.unbound` и
+  `backend.sumo.signal_junction.unknown`. Persisted export artifacts не
+  публиковались, runtime migration не вводится.
+- SUMO plain-network export contract повышен с v1 до v2: bundle содержит третий
+  документ `roadsim.con.xml`, `export_straight_network` заменён на
+  `export_network`, а код `backend.sumo.junction_movements.unsupported` удалён в
+  пользу `backend.sumo.junction_movements.incomplete`,
+  `backend.sumo.movement.endpoints_disconnected`,
+  `backend.sumo.junction_node.ambiguous`,
+  `backend.sumo.pedestrian_network.unsupported` и
+  `backend.sumo.traffic_controls.unsupported`. Persisted export artifacts ещё не
+  публиковались, поэтому runtime migration не вводится; callers обязаны
+  передавать `SUMO_NETCONVERT_INPUT_ARGUMENTS`.
 - In-memory CSN schema повышена с v1 до v2: semantic content hash теперь включает
   lane/pedestrian adjacency и их source maps. V1 runtime migration не вводится,
   поскольку persisted CSN artifacts ещё не публиковались.

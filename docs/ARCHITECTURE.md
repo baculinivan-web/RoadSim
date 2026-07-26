@@ -45,6 +45,8 @@
 | ADR-019 | Worker data — отдельный bounded batch pipe и loss policy | proposed |
 | ADR-020 | libsumo — versioned native C ABI только внутри SUMO worker | proposed |
 | ADR-021 | Geometry evaluation использует explicit context и bounded algorithms | принято |
+| ADR-022 | SUMO junction export задаёт полный connection/TLS table, а right-of-way делегируется pinned netconvert | принято |
+| ADR-023 | Пешеходный SUMO export заблокирован отсутствующей связью walking area ↔ pedestrian edge | принято |
 
 Новые решения оформляются отдельными ADR в `docs/adr/NNNN-title.md`: context, options, decision, consequences, migration.
 

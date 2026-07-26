@@ -5,14 +5,20 @@
 //! only then publishes it to a backend through `Arc<CompiledNetwork>`.
 
 use roadsim_types::{
-    CorridorId, CrossingId, JunctionId, LaneId, Sha256Digest, SidewalkId, SignalControllerId,
-    SignalGroupId, SignalPhaseId, SignalProgramId, StopLineId, WalkingAreaId,
+    CorridorId, CrossingId, DemandFlowId, DemandProfileId, JunctionId, LaneId, Sha256Digest,
+    SidewalkId, SignalControllerId, SignalGroupId, SignalPhaseId, SignalProgramId, StopLineId,
+    WalkingAreaId,
 };
 use serde::Serialize;
 use std::{collections::BTreeSet, error::Error, fmt};
 
 /// Schema of the in-memory CSN contract.
 pub const COMPILED_NETWORK_SCHEMA_VERSION: u32 = 5;
+/// Schema of the in-memory compiled demand contract.
+///
+/// Demand is scenario state, not network topology, so it is a separate
+/// artifact with its own version rather than a field of `CompiledNetwork`.
+pub const COMPILED_DEMAND_SCHEMA_VERSION: u32 = 1;
 pub const MAX_GRAPH_NODES: u32 = 1_000_000;
 pub const MAX_GRAPH_EDGES: usize = 4_000_000;
 
@@ -1865,6 +1871,218 @@ impl CompiledNetwork {
         &self.requirements
     }
 }
+
+/// Travel mode of one compiled demand flow.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompiledDemandMode {
+    Car,
+    Bus,
+}
+
+/// One authored demand interval resolved to explicit seconds and hourly rate.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CompiledDemandInterval {
+    start_s: f64,
+    end_s: f64,
+    flow_per_hour: f64,
+}
+
+impl CompiledDemandInterval {
+    /// Returns `None` for non-finite, negative, empty or inverted intervals.
+    #[must_use]
+    pub fn new(start_s: f64, end_s: f64, flow_per_hour: f64) -> Option<Self> {
+        if ![start_s, end_s, flow_per_hour]
+            .into_iter()
+            .all(f64::is_finite)
+            || start_s < 0.0
+            || end_s <= start_s
+            || flow_per_hour <= 0.0
+        {
+            return None;
+        }
+        Some(Self {
+            start_s,
+            end_s,
+            flow_per_hour,
+        })
+    }
+
+    #[must_use]
+    pub const fn start_s(self) -> f64 {
+        self.start_s
+    }
+
+    #[must_use]
+    pub const fn end_s(self) -> f64 {
+        self.end_s
+    }
+
+    #[must_use]
+    pub const fn flow_per_hour(self) -> f64 {
+        self.flow_per_hour
+    }
+}
+
+/// One authored demand flow resolved to compact source and sink lanes.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompiledDemandFlow {
+    demand_flow_id: DemandFlowId,
+    mode: CompiledDemandMode,
+    origin_lane: CompiledLaneId,
+    destination_lane: CompiledLaneId,
+    intervals: Vec<CompiledDemandInterval>,
+}
+
+impl CompiledDemandFlow {
+    #[must_use]
+    pub const fn new(
+        demand_flow_id: DemandFlowId,
+        mode: CompiledDemandMode,
+        origin_lane: CompiledLaneId,
+        destination_lane: CompiledLaneId,
+        intervals: Vec<CompiledDemandInterval>,
+    ) -> Self {
+        Self {
+            demand_flow_id,
+            mode,
+            origin_lane,
+            destination_lane,
+            intervals,
+        }
+    }
+
+    #[must_use]
+    pub const fn demand_flow_id(&self) -> DemandFlowId {
+        self.demand_flow_id
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> CompiledDemandMode {
+        self.mode
+    }
+
+    #[must_use]
+    pub const fn origin_lane(&self) -> CompiledLaneId {
+        self.origin_lane
+    }
+
+    #[must_use]
+    pub const fn destination_lane(&self) -> CompiledLaneId {
+        self.destination_lane
+    }
+
+    #[must_use]
+    pub fn intervals(&self) -> &[CompiledDemandInterval] {
+        &self.intervals
+    }
+}
+
+/// Deterministically ordered compiled demand of one authored profile.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompiledDemandTable {
+    schema_version: u32,
+    demand_profile_id: DemandProfileId,
+    lane_count: u32,
+    flows: Vec<CompiledDemandFlow>,
+}
+
+impl CompiledDemandTable {
+    pub fn new(
+        demand_profile_id: DemandProfileId,
+        lane_count: u32,
+        mut flows: Vec<CompiledDemandFlow>,
+    ) -> Result<Self, DemandTableError> {
+        if flows.len() > MAX_GRAPH_EDGES {
+            return Err(DemandTableError(DemandTableErrorCode::LimitExceeded));
+        }
+        flows.sort_by_key(CompiledDemandFlow::demand_flow_id);
+        if flows
+            .windows(2)
+            .any(|pair| pair[0].demand_flow_id() == pair[1].demand_flow_id())
+        {
+            return Err(DemandTableError(DemandTableErrorCode::DuplicateFlow));
+        }
+        for flow in &flows {
+            if flow.origin_lane().get() >= lane_count || flow.destination_lane().get() >= lane_count
+            {
+                return Err(DemandTableError(DemandTableErrorCode::LaneOutsideTable));
+            }
+            if flow.origin_lane() == flow.destination_lane() {
+                return Err(DemandTableError(DemandTableErrorCode::DegenerateFlow));
+            }
+            if flow.intervals().is_empty() {
+                return Err(DemandTableError(DemandTableErrorCode::FlowWithoutIntervals));
+            }
+        }
+        Ok(Self {
+            schema_version: COMPILED_DEMAND_SCHEMA_VERSION,
+            demand_profile_id,
+            lane_count,
+            flows,
+        })
+    }
+
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub const fn demand_profile_id(&self) -> DemandProfileId {
+        self.demand_profile_id
+    }
+
+    #[must_use]
+    pub const fn lane_count(&self) -> u32 {
+        self.lane_count
+    }
+
+    #[must_use]
+    pub fn flows(&self) -> &[CompiledDemandFlow] {
+        &self.flows
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DemandTableErrorCode {
+    LimitExceeded,
+    DuplicateFlow,
+    LaneOutsideTable,
+    DegenerateFlow,
+    FlowWithoutIntervals,
+}
+
+impl DemandTableErrorCode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LimitExceeded => "csn.demand.limit_exceeded",
+            Self::DuplicateFlow => "csn.demand.flow_duplicate",
+            Self::LaneOutsideTable => "csn.demand.lane_outside_table",
+            Self::DegenerateFlow => "csn.demand.flow_degenerate",
+            Self::FlowWithoutIntervals => "csn.demand.flow_without_intervals",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DemandTableError(DemandTableErrorCode);
+
+impl DemandTableError {
+    #[must_use]
+    pub const fn code(self) -> DemandTableErrorCode {
+        self.0
+    }
+}
+
+impl fmt::Display for DemandTableError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+impl Error for DemandTableError {}
 
 #[cfg(test)]
 mod tests {

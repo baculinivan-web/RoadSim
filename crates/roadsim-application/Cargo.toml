@@ -1,0 +1,21 @@
+[package]
+name = "roadsim-application"
+description = "Backend-independent RoadSim run orchestration service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+roadsim-backend-api = { version = "0.1.0", path = "../roadsim-backend-api" }
+roadsim-compiled-network = { version = "0.1.0", path = "../roadsim-compiled-network" }
+roadsim-types = { version = "0.1.0", path = "../roadsim-types" }
+
+[dev-dependencies]
+async-trait.workspace = true
+pollster.workspace = true
+roadsim-backend-fake = { version = "0.1.0", path = "../roadsim-backend-fake" }
+
+[lints]
+workspace = true

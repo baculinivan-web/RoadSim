@@ -1,6 +1,7 @@
 use crate::simulation::{SimulationController, SimulationObservation, UiSimulationState};
 use egui::{Color32, Pos2, Rect, Stroke, Vec2};
 use egui_wgpu::{RendererOptions, WgpuConfiguration, winit::Painter};
+use roadsim_application::RunRequest;
 use roadsim_backend_api::FrameBatch;
 use roadsim_compiled_network::{CompiledNetwork, CompiledPoint};
 use std::{error::Error, fmt, num::NonZeroU32, sync::Arc};
@@ -356,38 +357,30 @@ fn draw_shell(context: &egui::Context, scale_factor: f64, simulation: &mut Simul
             ui.small("roadsim.fake.v1 · seed 20260718");
             ui.label(format!("Tick: {}", simulation.tick().get()));
             ui.horizontal(|ui| {
-                let can_start = matches!(
-                    simulation.state(),
-                    UiSimulationState::Ready
-                        | UiSimulationState::Completed
-                        | UiSimulationState::Cancelled
-                        | UiSimulationState::Failed
-                );
+                // Enablement comes from the orchestrator, so a button can
+                // never offer a transition the run would refuse.
+                let can_start =
+                    simulation.accepts(RunRequest::Start) || simulation.accepts(RunRequest::Reset);
                 if ui
                     .add_enabled(can_start, egui::Button::new("▶ Запустить"))
                     .clicked()
                 {
                     simulation.start();
                 }
-                match simulation.state() {
-                    UiSimulationState::Running => {
-                        if ui.button("Ⅱ Пауза").clicked() {
-                            simulation.pause();
-                        }
+                if simulation.accepts(RunRequest::Resume) {
+                    if ui.button("▶ Продолжить").clicked() {
+                        simulation.resume();
                     }
-                    UiSimulationState::Paused => {
-                        if ui.button("▶ Продолжить").clicked() {
-                            simulation.resume();
-                        }
-                    }
-                    _ => {
-                        let _ = ui.add_enabled(false, egui::Button::new("Ⅱ Пауза"));
-                    }
+                } else if ui
+                    .add_enabled(
+                        simulation.accepts(RunRequest::Pause),
+                        egui::Button::new("Ⅱ Пауза"),
+                    )
+                    .clicked()
+                {
+                    simulation.pause();
                 }
-                let can_stop = matches!(
-                    simulation.state(),
-                    UiSimulationState::Running | UiSimulationState::Paused
-                );
+                let can_stop = simulation.accepts(RunRequest::Cancel);
                 if ui
                     .add_enabled(can_stop, egui::Button::new("■ Стоп"))
                     .clicked()

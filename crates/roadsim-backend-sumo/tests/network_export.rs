@@ -1,0 +1,820 @@
+use roadsim_backend_sumo::{
+    SUMO_CONNECTIONS_FILE, SUMO_EDGES_FILE, SUMO_NETCONVERT_INPUT_ARGUMENTS,
+    SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SUMO_ROUTES_EXPORT_VERSION, SUMO_TLS_FILE,
+    SumoAgentId, SumoExportErrorCode, SumoRoadExportOptions, SumoVehicleTypeOptions,
+    export_network, export_routes,
+};
+use roadsim_compiled_network::{
+    CapabilityId, CapabilityRequirements, CompiledControlTable, CompiledDemandFlow,
+    CompiledDemandInterval, CompiledDemandMode, CompiledDemandTable, CompiledLaneId,
+    CompiledLaneUse, CompiledMovement, CompiledMovementCurve, CompiledMovementId, CompiledNetwork,
+    CompiledNetworkHeader, CompiledPoint, CompiledSignalController, CompiledSignalGroup,
+    CompiledSignalGroupId, CompiledSignalIndication, CompiledSignalPhase, CompiledSignalProgram,
+    CompiledSignalState, CompiledStopPosition, CompiledTopology, LaneAdjacency, LaneGraph,
+    LaneOrigin, LaneTable, MovementGeometryTable, MovementTable, PedestrianGraph,
+    PedestrianNodeOrigin, SourceRevision,
+};
+use roadsim_types::{
+    CorridorId, DemandFlowId, DemandProfileId, JunctionId, LaneId, Sha256Digest,
+    SignalControllerId, SignalGroupId, SignalPhaseId, SignalProgramId, StopLineId, WalkingAreaId,
+};
+use std::{path::PathBuf, process::Command};
+
+const JUNCTION: u128 = 30;
+/// Lateral offset of one directional lane from its corridor centerline, in metres.
+const LANE_OFFSET_M: f64 = 1.75;
+const ARM_LENGTH_M: f64 = 50.0;
+
+fn network(lane_use: CompiledLaneUse) -> CompiledNetwork {
+    let lanes = LaneTable::new(
+        vec![
+            CompiledPoint::new(100.0, 0.0),
+            CompiledPoint::new(0.0, -0.0),
+        ],
+        vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(100.0, 0.0)],
+        vec![3.5, 3.5],
+        vec![lane_use, lane_use],
+    )
+    .unwrap();
+    CompiledNetwork::new(
+        CompiledNetworkHeader::new(SourceRevision::new(7), Sha256Digest::from_bytes([9; 32])),
+        lanes,
+        vec![
+            LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(11)),
+            LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(12)),
+        ],
+        CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
+    )
+    .unwrap()
+}
+
+fn options() -> SumoRoadExportOptions {
+    SumoRoadExportOptions::new(13.89).unwrap()
+}
+
+/// Compact lane IDs of the four-arm fixture, right-hand traffic.
+const S_IN: u32 = 0;
+const S_OUT: u32 = 1;
+const E_IN: u32 = 2;
+const E_OUT: u32 = 3;
+const N_IN: u32 = 4;
+const N_OUT: u32 = 5;
+const W_IN: u32 = 6;
+const W_OUT: u32 = 7;
+
+/// Right, straight and left turn for every approach; U-turns are not authored.
+const TURNS: [(u32, u32); 12] = [
+    (S_IN, E_OUT),
+    (S_IN, N_OUT),
+    (S_IN, W_OUT),
+    (E_IN, N_OUT),
+    (E_IN, W_OUT),
+    (E_IN, S_OUT),
+    (N_IN, W_OUT),
+    (N_IN, S_OUT),
+    (N_IN, E_OUT),
+    (W_IN, S_OUT),
+    (W_IN, E_OUT),
+    (W_IN, N_OUT),
+];
+
+fn arm_endpoints() -> Vec<(CompiledPoint, CompiledPoint)> {
+    let offset = LANE_OFFSET_M;
+    let arm = ARM_LENGTH_M;
+    let center = CompiledPoint::new(0.0, 0.0);
+    vec![
+        (CompiledPoint::new(offset, -arm), center),
+        (center, CompiledPoint::new(-offset, -arm)),
+        (CompiledPoint::new(arm, offset), center),
+        (center, CompiledPoint::new(arm, -offset)),
+        (CompiledPoint::new(-offset, arm), center),
+        (center, CompiledPoint::new(offset, arm)),
+        (CompiledPoint::new(-arm, -offset), center),
+        (center, CompiledPoint::new(-arm, offset)),
+    ]
+}
+
+/// Sorted `(from, to)` pairs, i.e. the compact movement IDs the CSN assigns.
+fn sorted_turns() -> Vec<(u32, u32)> {
+    let mut turns = TURNS.to_vec();
+    turns.sort_unstable();
+    turns
+}
+
+fn four_arm_network(controls: CompiledControlTable) -> CompiledNetwork {
+    four_arm_network_with(
+        sorted_turns(),
+        controls,
+        PedestrianGraph::new(vec![], vec![]).unwrap(),
+    )
+}
+
+fn four_arm_network_with(
+    turns: Vec<(u32, u32)>,
+    controls: CompiledControlTable,
+    pedestrian_graph: PedestrianGraph,
+) -> CompiledNetwork {
+    let endpoints = arm_endpoints();
+    let lane_count = endpoints.len() as u32;
+    let lanes = LaneTable::new(
+        endpoints.iter().map(|(start, _)| *start).collect(),
+        endpoints.iter().map(|(_, end)| *end).collect(),
+        vec![3.5; endpoints.len()],
+        vec![CompiledLaneUse::GeneralTraffic; endpoints.len()],
+    )
+    .unwrap();
+    let junction_id = JunctionId::from_u128(JUNCTION);
+    let movements: Vec<_> = turns
+        .iter()
+        .map(|(from, to)| {
+            CompiledMovement::new(
+                CompiledLaneId::new(*from),
+                CompiledLaneId::new(*to),
+                junction_id,
+            )
+        })
+        .collect();
+    let adjacency: Vec<_> = turns
+        .iter()
+        .map(|(from, to)| {
+            LaneAdjacency::new(
+                CompiledLaneId::new(*from),
+                CompiledLaneId::new(*to),
+                junction_id,
+            )
+        })
+        .collect();
+    // The exporter never reads curve control points; the fixture only has to
+    // satisfy the CSN invariant of one finite curve per compact movement.
+    let curves: Vec<_> = turns
+        .iter()
+        .enumerate()
+        .map(|(index, (from, to))| {
+            let approach = endpoints[*from as usize].0;
+            let departure = endpoints[*to as usize].1;
+            CompiledMovementCurve::new(
+                CompiledMovementId::new(index as u32),
+                CompiledPoint::new(approach.x_m() * 0.1, approach.y_m() * 0.1),
+                CompiledPoint::new(0.0, 0.0),
+                CompiledPoint::new(0.0, 0.0),
+                CompiledPoint::new(departure.x_m() * 0.1, departure.y_m() * 0.1),
+            )
+        })
+        .collect();
+    let movement_count = movements.len() as u32;
+    CompiledNetwork::new_with_graphs(
+        CompiledNetworkHeader::new(SourceRevision::new(7), Sha256Digest::from_bytes([9; 32])),
+        lanes,
+        (0..endpoints.len())
+            .map(|index| {
+                LaneOrigin::new(
+                    CorridorId::from_u128(100 + (index as u128) / 2),
+                    LaneId::from_u128(200 + index as u128),
+                )
+            })
+            .collect(),
+        CompiledTopology::new(
+            LaneGraph::new(lane_count, adjacency).unwrap(),
+            MovementTable::new(lane_count, movements).unwrap(),
+            MovementGeometryTable::new(movement_count, curves, Vec::new()).unwrap(),
+            pedestrian_graph,
+        ),
+        controls,
+        CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
+    )
+    .unwrap()
+}
+
+fn empty_controls(movement_count: u32) -> CompiledControlTable {
+    CompiledControlTable::new(8, movement_count, vec![], vec![], vec![], vec![]).unwrap()
+}
+
+/// Movements of the north-south approaches, i.e. compact IDs 0..3 and 6..9.
+const NORTH_SOUTH_MOVEMENTS: [u32; 6] = [0, 1, 2, 6, 7, 8];
+/// Movements of the east-west approaches.
+const EAST_WEST_MOVEMENTS: [u32; 6] = [3, 4, 5, 9, 10, 11];
+
+fn group(id: u128, movements: &[u32]) -> CompiledSignalGroup {
+    CompiledSignalGroup::new(
+        SignalGroupId::from_u128(id),
+        JunctionId::from_u128(JUNCTION),
+        movements
+            .iter()
+            .copied()
+            .map(CompiledMovementId::new)
+            .collect(),
+    )
+}
+
+fn phase(id: u128, intergreen_s: f64, first: CompiledSignalIndication) -> CompiledSignalPhase {
+    let second = match first {
+        CompiledSignalIndication::Green => CompiledSignalIndication::Red,
+        _ => CompiledSignalIndication::Green,
+    };
+    CompiledSignalPhase::new(
+        SignalPhaseId::from_u128(id),
+        30.0,
+        intergreen_s,
+        vec![
+            CompiledSignalState::new(CompiledSignalGroupId::new(0), first),
+            CompiledSignalState::new(CompiledSignalGroupId::new(1), second),
+        ],
+    )
+}
+
+/// Two-phase fixed-time program covering every movement of the fixture.
+fn signalized_controls(
+    intergreen_s: f64,
+    groups: Vec<CompiledSignalGroup>,
+) -> CompiledControlTable {
+    let junction_id = JunctionId::from_u128(JUNCTION);
+    let program_id = SignalProgramId::from_u128(40);
+    CompiledControlTable::new(
+        8,
+        TURNS.len() as u32,
+        vec![],
+        groups,
+        vec![CompiledSignalProgram::new(
+            program_id,
+            junction_id,
+            vec![
+                phase(44, intergreen_s, CompiledSignalIndication::Green),
+                phase(45, intergreen_s, CompiledSignalIndication::Red),
+            ],
+        )],
+        vec![CompiledSignalController::new(
+            SignalControllerId::from_u128(43),
+            junction_id,
+            program_id,
+        )],
+    )
+    .unwrap()
+}
+
+fn full_signal_groups() -> Vec<CompiledSignalGroup> {
+    vec![
+        group(41, &NORTH_SOUTH_MOVEMENTS),
+        group(42, &EAST_WEST_MOVEMENTS),
+    ]
+}
+
+#[test]
+fn straight_lanes_export_deterministically_with_lossless_mapping() {
+    let network = network(CompiledLaneUse::GeneralTraffic);
+    let first = export_network(&network, options()).unwrap();
+    let second = export_network(&network, options()).unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(first.version(), SUMO_NETWORK_EXPORT_VERSION);
+    assert_eq!(first.nodes_xml().matches("<node ").count(), 2);
+    assert!(first.nodes_xml().contains("x=\"0\" y=\"0\""));
+    assert!(first.nodes_xml().contains("x=\"100\" y=\"0\""));
+    assert!(!first.nodes_xml().contains("type=\"priority\""));
+    assert_eq!(first.edges_xml().matches("<edge ").count(), 2);
+    assert!(first.edges_xml().contains("id=\"rs_edge_0\""));
+    assert!(first.edges_xml().contains("speed=\"13.89\""));
+    assert!(first.edges_xml().contains("width=\"3.5\""));
+    assert_eq!(first.connections_xml().matches("<connection ").count(), 0);
+    assert!(first.connection_mappings().is_empty());
+
+    let mapping = &first.lane_mappings()[0];
+    assert_eq!(mapping.compiled_lane_id().get(), 0);
+    assert_eq!(
+        mapping.origin(),
+        network.lane_origin(mapping.compiled_lane_id()).unwrap()
+    );
+    assert_eq!(mapping.edge_id().as_str(), "rs_edge_0");
+    assert_eq!(mapping.lane_index(), 0);
+}
+
+#[test]
+fn four_arm_junction_exports_one_explicit_connection_per_movement() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let first = export_network(&network, options()).unwrap();
+    let second = export_network(&network, options()).unwrap();
+
+    assert_eq!(first, second);
+    // Eight arm endpoints plus the single shared junction node.
+    assert_eq!(first.nodes_xml().matches("<node ").count(), 9);
+    assert_eq!(first.nodes_xml().matches("type=\"priority\"").count(), 1);
+    assert_eq!(first.edges_xml().matches("<edge ").count(), 8);
+    assert_eq!(
+        first.connections_xml().matches("<connection ").count(),
+        TURNS.len()
+    );
+    assert_eq!(first.connection_mappings().len(), TURNS.len());
+
+    for (index, (from, to)) in sorted_turns().into_iter().enumerate() {
+        let mapping = &first.connection_mappings()[index];
+        assert_eq!(mapping.movement_id().get(), index as u32);
+        assert_eq!(mapping.junction_id(), JunctionId::from_u128(JUNCTION));
+        assert_eq!(mapping.from_edge_id().as_str(), format!("rs_edge_{from}"));
+        assert_eq!(mapping.to_edge_id().as_str(), format!("rs_edge_{to}"));
+        assert_eq!(mapping.from_lane_index(), 0);
+        assert_eq!(mapping.to_lane_index(), 0);
+        assert!(first.connections_xml().contains(&format!(
+            "<connection from=\"rs_edge_{from}\" to=\"rs_edge_{to}\" fromLane=\"0\" toLane=\"0\"/>"
+        )));
+        // Every connection is anchored at the same generated junction node.
+        assert_eq!(
+            mapping.node_id().as_str(),
+            first.connection_mappings()[0].node_id().as_str()
+        );
+    }
+}
+
+#[test]
+fn incomplete_junction_movements_fail_instead_of_netconvert_guessing() {
+    let mut turns = sorted_turns();
+    turns.retain(|(from, _)| *from != W_IN);
+    let network = four_arm_network_with(
+        turns,
+        empty_controls(9),
+        PedestrianGraph::new(vec![], vec![]).unwrap(),
+    );
+
+    let error = export_network(&network, options()).unwrap_err();
+    assert_eq!(
+        error.code(),
+        SumoExportErrorCode::JunctionMovementsIncomplete
+    );
+    assert!(
+        error
+            .object_refs()
+            .contains(&LaneId::from_u128(200 + u128::from(W_IN)).into())
+    );
+    assert!(
+        error
+            .object_refs()
+            .contains(&JunctionId::from_u128(JUNCTION).into())
+    );
+}
+
+#[test]
+fn movement_between_disconnected_lane_endpoints_is_rejected() {
+    let lanes = LaneTable::new(
+        vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(120.0, 0.0)],
+        vec![
+            CompiledPoint::new(100.0, 0.0),
+            CompiledPoint::new(200.0, 0.0),
+        ],
+        vec![3.5, 3.5],
+        vec![
+            CompiledLaneUse::GeneralTraffic,
+            CompiledLaneUse::GeneralTraffic,
+        ],
+    )
+    .unwrap();
+    let junction_id = JunctionId::from_u128(JUNCTION);
+    let from = CompiledLaneId::new(0);
+    let to = CompiledLaneId::new(1);
+    let network = CompiledNetwork::new_with_graphs(
+        CompiledNetworkHeader::new(SourceRevision::new(7), Sha256Digest::from_bytes([9; 32])),
+        lanes,
+        vec![
+            LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(11)),
+            LaneOrigin::new(CorridorId::from_u128(20), LaneId::from_u128(21)),
+        ],
+        CompiledTopology::new(
+            LaneGraph::new(2, vec![LaneAdjacency::new(from, to, junction_id)]).unwrap(),
+            MovementTable::new(2, vec![CompiledMovement::new(from, to, junction_id)]).unwrap(),
+            MovementGeometryTable::new(
+                1,
+                vec![CompiledMovementCurve::new(
+                    CompiledMovementId::new(0),
+                    CompiledPoint::new(90.0, 0.0),
+                    CompiledPoint::new(100.0, 0.0),
+                    CompiledPoint::new(110.0, 0.0),
+                    CompiledPoint::new(120.0, 0.0),
+                )],
+                Vec::new(),
+            )
+            .unwrap(),
+            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+        ),
+        CompiledControlTable::new(2, 1, vec![], vec![], vec![], vec![]).unwrap(),
+        CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
+    )
+    .unwrap();
+
+    let error = export_network(&network, options()).unwrap_err();
+    assert_eq!(
+        error.code(),
+        SumoExportErrorCode::MovementEndpointsDisconnected
+    );
+    for object_ref in [
+        JunctionId::from_u128(JUNCTION).into(),
+        CorridorId::from_u128(10).into(),
+        LaneId::from_u128(11).into(),
+        CorridorId::from_u128(20).into(),
+        LaneId::from_u128(21).into(),
+    ] {
+        assert!(error.object_refs().contains(&object_ref));
+    }
+}
+
+#[test]
+fn unsupported_lane_use_fails_with_design_object_evidence() {
+    let network = network(CompiledLaneUse::BusOnly);
+    let error = export_network(&network, options()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::UnsupportedLaneUse);
+    assert!(
+        error
+            .object_refs()
+            .contains(&CorridorId::from_u128(10).into())
+    );
+    assert!(error.object_refs().contains(&LaneId::from_u128(11).into()));
+}
+
+#[test]
+fn fixed_time_program_exports_a_deterministic_signal_state_timeline() {
+    let network = four_arm_network(signalized_controls(0.0, full_signal_groups()));
+    let first = export_network(&network, options()).unwrap();
+    let second = export_network(&network, options()).unwrap();
+
+    assert_eq!(first, second);
+    assert!(
+        first
+            .nodes_xml()
+            .contains("type=\"traffic_light\" tl=\"rs_tls_0\"")
+    );
+    assert_eq!(first.signal_mappings().len(), 1);
+    let mapping = &first.signal_mappings()[0];
+    assert_eq!(mapping.tls_id().as_str(), "rs_tls_0");
+    assert_eq!(mapping.junction_id(), JunctionId::from_u128(JUNCTION));
+    assert_eq!(
+        mapping.signal_controller_id(),
+        SignalControllerId::from_u128(43)
+    );
+    assert_eq!(mapping.signal_program_id(), SignalProgramId::from_u128(40));
+    assert_eq!(mapping.link_movement_ids().len(), TURNS.len());
+
+    // Link index follows the compact movement order of the junction.
+    for (link_index, movement_id) in mapping.link_movement_ids().iter().enumerate() {
+        assert_eq!(movement_id.get(), link_index as u32);
+        let connection = &first.connection_mappings()[link_index];
+        let (tls_id, exported_index) = connection.tls_link().unwrap();
+        assert_eq!(tls_id.as_str(), "rs_tls_0");
+        assert_eq!(exported_index, link_index as u16);
+        assert!(
+            first
+                .connections_xml()
+                .contains(&format!("tl=\"rs_tls_0\" linkIndex=\"{link_index}\""))
+        );
+    }
+
+    // Both authored phases keep their order, duration and per-group state.
+    assert!(
+        first
+            .tls_xml()
+            .contains("<phase duration=\"30\" state=\"GGGrrrGGGrrr\"/>")
+    );
+    assert!(
+        first
+            .tls_xml()
+            .contains("<phase duration=\"30\" state=\"rrrGGGrrrGGG\"/>")
+    );
+    assert_eq!(first.tls_xml().matches("<phase ").count(), 2);
+}
+
+#[test]
+fn unsignalized_junction_exports_no_traffic_light() {
+    let bundle = export_network(
+        &four_arm_network(empty_controls(TURNS.len() as u32)),
+        options(),
+    )
+    .unwrap();
+
+    assert!(bundle.signal_mappings().is_empty());
+    assert!(!bundle.nodes_xml().contains("traffic_light"));
+    assert!(!bundle.connections_xml().contains("linkIndex"));
+    assert_eq!(bundle.tls_xml().matches("<tlLogic ").count(), 0);
+    assert!(
+        bundle
+            .connection_mappings()
+            .iter()
+            .all(|mapping| mapping.tls_link().is_none())
+    );
+}
+
+#[test]
+fn authored_intergreen_is_rejected_instead_of_being_interpreted() {
+    let network = four_arm_network(signalized_controls(3.0, full_signal_groups()));
+    let error = export_network(&network, options()).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        SumoExportErrorCode::UnsupportedSignalIntergreen
+    );
+    assert!(
+        error
+            .object_refs()
+            .contains(&SignalProgramId::from_u128(40).into())
+    );
+}
+
+#[test]
+fn movement_without_a_signal_group_blocks_the_signalized_export() {
+    let mut partial = NORTH_SOUTH_MOVEMENTS.to_vec();
+    partial.pop();
+    let network = four_arm_network(signalized_controls(
+        0.0,
+        vec![group(41, &partial), group(42, &EAST_WEST_MOVEMENTS)],
+    ));
+
+    let error = export_network(&network, options()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::SignalMovementUnbound);
+    assert!(
+        error
+            .object_refs()
+            .contains(&JunctionId::from_u128(JUNCTION).into())
+    );
+}
+
+#[test]
+fn stop_positions_fail_instead_of_being_dropped() {
+    let controls = CompiledControlTable::new(
+        8,
+        TURNS.len() as u32,
+        vec![CompiledStopPosition::new(
+            StopLineId::from_u128(50),
+            CompiledLaneId::new(S_IN),
+            45.0,
+        )],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let error = export_network(&four_arm_network(controls), options()).unwrap_err();
+
+    assert_eq!(error.code(), SumoExportErrorCode::UnsupportedStopPositions);
+    assert!(
+        error
+            .object_refs()
+            .contains(&StopLineId::from_u128(50).into())
+    );
+}
+
+#[test]
+fn pedestrian_network_fails_before_t07_instead_of_being_dropped() {
+    let network = four_arm_network_with(
+        sorted_turns(),
+        empty_controls(TURNS.len() as u32),
+        PedestrianGraph::new(
+            vec![PedestrianNodeOrigin::WalkingArea(WalkingAreaId::from_u128(
+                60,
+            ))],
+            vec![],
+        )
+        .unwrap(),
+    );
+
+    let error = export_network(&network, options()).unwrap_err();
+    assert_eq!(
+        error.code(),
+        SumoExportErrorCode::UnsupportedPedestrianNetwork
+    );
+}
+
+fn car_demand(intervals: Vec<CompiledDemandInterval>) -> CompiledDemandTable {
+    CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        8,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Car,
+            CompiledLaneId::new(S_IN),
+            CompiledLaneId::new(N_OUT),
+            intervals,
+        )],
+    )
+    .unwrap()
+}
+
+fn vehicle_type() -> SumoVehicleTypeOptions {
+    SumoVehicleTypeOptions::new(4.5, 1.8, 13.89).unwrap()
+}
+
+#[test]
+fn compiled_demand_exports_one_sumo_flow_per_authored_interval() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let bundle = export_network(&network, options()).unwrap();
+    let demand = car_demand(vec![
+        CompiledDemandInterval::new(0.0, 600.0, 720.0).unwrap(),
+        CompiledDemandInterval::new(600.0, 1200.0, 360.0).unwrap(),
+    ]);
+
+    let routes = export_routes(&network, &demand, &bundle, vehicle_type()).unwrap();
+    assert_eq!(
+        routes,
+        export_routes(&network, &demand, &bundle, vehicle_type()).unwrap()
+    );
+    assert_eq!(routes.version(), SUMO_ROUTES_EXPORT_VERSION);
+    assert_eq!(routes.flow_mappings().len(), 2);
+    assert_eq!(routes.routes_xml().matches("<flow ").count(), 2);
+
+    // The vehicle footprint matches the one the worker already reports.
+    assert!(
+        routes
+            .routes_xml()
+            .contains("<vType id=\"rs_car\" vClass=\"passenger\" length=\"4.5\" width=\"1.8\"")
+    );
+    // Authored units are preserved: seconds for the interval, vehicles per hour
+    // for the rate. No arrival process is invented here.
+    assert!(routes.routes_xml().contains(
+        "begin=\"0\" end=\"600\" vehsPerHour=\"720\" from=\"rs_edge_0\" to=\"rs_edge_5\""
+    ));
+    assert!(routes.routes_xml().contains(
+        "begin=\"600\" end=\"1200\" vehsPerHour=\"360\" from=\"rs_edge_0\" to=\"rs_edge_5\""
+    ));
+
+    for (index, mapping) in routes.flow_mappings().iter().enumerate() {
+        assert_eq!(mapping.demand_flow_id(), DemandFlowId::from_u128(80));
+        assert_eq!(mapping.interval_index(), index as u16);
+        assert_eq!(mapping.from_edge_id().as_str(), "rs_edge_0");
+        assert_eq!(mapping.to_edge_id().as_str(), "rs_edge_5");
+        assert!(routes.routes_xml().contains(mapping.flow_id()));
+    }
+}
+
+#[test]
+fn demand_compiled_against_another_network_is_rejected() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let bundle = export_network(&network, options()).unwrap();
+    let demand = CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        2,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Car,
+            CompiledLaneId::new(0),
+            CompiledLaneId::new(1),
+            vec![CompiledDemandInterval::new(0.0, 60.0, 60.0).unwrap()],
+        )],
+    )
+    .unwrap();
+
+    let error = export_routes(&network, &demand, &bundle, vehicle_type()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::DemandNetworkMismatch);
+    assert!(
+        error
+            .object_refs()
+            .contains(&DemandProfileId::from_u128(90).into())
+    );
+}
+
+#[test]
+fn bus_demand_is_rejected_before_it_becomes_a_passenger_car() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let bundle = export_network(&network, options()).unwrap();
+    let demand = CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        8,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Bus,
+            CompiledLaneId::new(S_IN),
+            CompiledLaneId::new(N_OUT),
+            vec![CompiledDemandInterval::new(0.0, 60.0, 60.0).unwrap()],
+        )],
+    )
+    .unwrap();
+
+    let error = export_routes(&network, &demand, &bundle, vehicle_type()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::UnsupportedDemandMode);
+    assert!(
+        error
+            .object_refs()
+            .contains(&DemandFlowId::from_u128(80).into())
+    );
+}
+
+#[test]
+fn vehicle_type_rejects_invalid_dimensions_and_speed() {
+    for (length, width, speed) in [
+        (0.0, 1.8, 13.89),
+        (4.5, -1.0, 13.89),
+        (4.5, 1.8, f64::NAN),
+        (f64::INFINITY, 1.8, 13.89),
+    ] {
+        let error = SumoVehicleTypeOptions::new(length, width, speed).unwrap_err();
+        assert_eq!(error.code(), SumoExportErrorCode::InvalidVehicleType);
+    }
+}
+
+#[test]
+fn speed_is_explicit_and_rejects_invalid_values() {
+    for value in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let error = SumoRoadExportOptions::new(value).unwrap_err();
+        assert_eq!(error.code(), SumoExportErrorCode::InvalidSpeed);
+        assert!(error.object_refs().is_empty());
+    }
+}
+
+#[test]
+fn compact_agent_ids_use_the_worker_namespace_without_hashing() {
+    assert_eq!(SumoAgentId::from_compact(0).as_str(), "rs_agent_0");
+    assert_eq!(
+        SumoAgentId::from_compact(u32::MAX).as_str(),
+        "rs_agent_4294967295"
+    );
+}
+
+#[test]
+fn netconvert_arguments_disable_invented_connections() {
+    assert!(SUMO_NETCONVERT_INPUT_ARGUMENTS.contains(&"--no-turnarounds"));
+    assert!(SUMO_NETCONVERT_INPUT_ARGUMENTS.contains(&SUMO_CONNECTIONS_FILE));
+}
+
+#[test]
+#[ignore = "requires ROADSIM_NETCONVERT for exact SUMO 1.27.1"]
+fn exact_netconvert_accepts_exported_four_arm_junction() {
+    let netconvert = PathBuf::from(
+        std::env::var_os("ROADSIM_NETCONVERT").expect("ROADSIM_NETCONVERT is required"),
+    );
+    assert!(
+        netconvert.is_absolute(),
+        "ROADSIM_NETCONVERT must be absolute"
+    );
+    let root =
+        std::env::temp_dir().join(format!("roadsim-sumo-export-smoke-{}", std::process::id()));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    std::fs::create_dir(&root).unwrap();
+    let bundle = export_network(
+        &four_arm_network(empty_controls(TURNS.len() as u32)),
+        options(),
+    )
+    .unwrap();
+    std::fs::write(root.join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
+    std::fs::write(root.join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
+    std::fs::write(root.join(SUMO_CONNECTIONS_FILE), bundle.connections_xml()).unwrap();
+    std::fs::write(root.join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
+    let output = Command::new(netconvert)
+        .current_dir(&root)
+        .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
+        .args(["--output-file", "roadsim.net.xml"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "netconvert failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let compiled_xml = std::fs::read_to_string(root.join("roadsim.net.xml")).unwrap();
+    for (from, to) in sorted_turns() {
+        assert!(compiled_xml.contains(&format!(
+            "<connection from=\"rs_edge_{from}\" to=\"rs_edge_{to}\" fromLane=\"0\" toLane=\"0\""
+        )));
+    }
+    // netconvert must resolve right-of-way for the exported turn paths, so at
+    // least one movement yields instead of every approach being major.
+    assert!(compiled_xml.contains("<request "));
+    assert!(!compiled_xml.contains("<tlLogic "));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "requires ROADSIM_NETCONVERT for exact SUMO 1.27.1"]
+fn exact_netconvert_accepts_the_exported_fixed_time_program() {
+    let netconvert = PathBuf::from(
+        std::env::var_os("ROADSIM_NETCONVERT").expect("ROADSIM_NETCONVERT is required"),
+    );
+    assert!(
+        netconvert.is_absolute(),
+        "ROADSIM_NETCONVERT must be absolute"
+    );
+    let root = std::env::temp_dir().join(format!("roadsim-sumo-tls-smoke-{}", std::process::id()));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    std::fs::create_dir(&root).unwrap();
+    let bundle = export_network(
+        &four_arm_network(signalized_controls(0.0, full_signal_groups())),
+        options(),
+    )
+    .unwrap();
+    std::fs::write(root.join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
+    std::fs::write(root.join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
+    std::fs::write(root.join(SUMO_CONNECTIONS_FILE), bundle.connections_xml()).unwrap();
+    std::fs::write(root.join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
+    let output = Command::new(netconvert)
+        .current_dir(&root)
+        .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
+        .args(["--output-file", "roadsim.net.xml"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "netconvert failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let compiled_xml = std::fs::read_to_string(root.join("roadsim.net.xml")).unwrap();
+    assert!(compiled_xml.contains("<tlLogic id=\"rs_tls_0\""));
+    assert!(compiled_xml.contains("state=\"GGGrrrGGGrrr\""));
+    assert!(compiled_xml.contains("state=\"rrrGGGrrrGGG\""));
+    assert!(compiled_xml.contains("type=\"traffic_light\""));
+    std::fs::remove_dir_all(root).unwrap();
+}

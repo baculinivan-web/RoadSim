@@ -1,11 +1,16 @@
 use roadsim_backend_sumo::{
-    SUMO_EDGES_FILE, SUMO_NODES_FILE, SumoRoadExportOptions, export_straight_network,
+    SUMO_CONNECTIONS_FILE, SUMO_EDGES_FILE, SUMO_NETCONVERT_INPUT_ARGUMENTS, SUMO_NODES_FILE,
+    SUMO_ROUTES_FILE, SUMO_TLS_FILE, SumoRoadExportOptions, SumoVehicleTypeOptions, export_network,
+    export_routes,
 };
 use roadsim_compiled_network::{
-    CapabilityId, CapabilityRequirements, CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader,
-    CompiledPoint, LaneOrigin, LaneTable, SourceRevision,
+    CapabilityId, CapabilityRequirements, CompiledControlTable, CompiledDemandFlow,
+    CompiledDemandInterval, CompiledDemandMode, CompiledDemandTable, CompiledLaneId,
+    CompiledLaneUse, CompiledMovement, CompiledMovementCurve, CompiledMovementId, CompiledNetwork,
+    CompiledNetworkHeader, CompiledPoint, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin,
+    LaneTable, MovementGeometryTable, MovementTable, PedestrianGraph, SourceRevision,
 };
-use roadsim_types::{CorridorId, LaneId, Sha256Digest};
+use roadsim_types::{CorridorId, DemandFlowId, DemandProfileId, JunctionId, LaneId, Sha256Digest};
 use roadsim_worker_client::{
     RunDirectoryLimits, RunDirectoryManager, RunState, WorkerClient, WorkerClientConfig,
     WorkerClientErrorCode,
@@ -249,8 +254,7 @@ fn real_libsumo_runs_exported_straight_csn() {
     let manager = RunDirectoryManager::new(&root, RunDirectoryLimits::new(1, 8).unwrap()).unwrap();
     let mut run = manager.create_run(92, 1).unwrap();
     let network = one_lane_network();
-    let bundle =
-        export_straight_network(&network, SumoRoadExportOptions::new(13.89).unwrap()).unwrap();
+    let bundle = export_network(&network, SumoRoadExportOptions::new(13.89).unwrap()).unwrap();
     assert_eq!(
         bundle.lane_mappings()[0].origin(),
         network
@@ -260,22 +264,20 @@ fn real_libsumo_runs_exported_straight_csn() {
     std::fs::write(run.path().join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
     std::fs::write(run.path().join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
     std::fs::write(
+        run.path().join(SUMO_CONNECTIONS_FILE),
+        bundle.connections_xml(),
+    )
+    .unwrap();
+    std::fs::write(run.path().join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
+    std::fs::write(
         run.path().join("roadsim.sumocfg"),
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n    <input><net-file value=\"roadsim.net.xml\"/></input>\n    <time><begin value=\"0\"/><end value=\"1\"/></time>\n</configuration>\n",
     )
     .unwrap();
     let output = Command::new(netconvert)
         .current_dir(run.path())
-        .args([
-            "--node-files",
-            SUMO_NODES_FILE,
-            "--edge-files",
-            SUMO_EDGES_FILE,
-            "--output-file",
-            "roadsim.net.xml",
-            "--no-turnarounds",
-            "true",
-        ])
+        .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
+        .args(["--output-file", "roadsim.net.xml"])
         .output()
         .unwrap();
     assert!(
@@ -369,6 +371,70 @@ fn copy_minimal_fixture(destination: &std::path::Path) {
     }
 }
 
+/// Two corridors joined by one junction movement, i.e. the smallest network
+/// that exercises the exported connection table end to end.
+fn junction_network() -> CompiledNetwork {
+    let lanes = LaneTable::new(
+        vec![CompiledPoint::new(0.0, 0.0), CompiledPoint::new(100.0, 0.0)],
+        vec![
+            CompiledPoint::new(100.0, 0.0),
+            CompiledPoint::new(200.0, 0.0),
+        ],
+        vec![3.5, 3.5],
+        vec![
+            CompiledLaneUse::GeneralTraffic,
+            CompiledLaneUse::GeneralTraffic,
+        ],
+    )
+    .unwrap();
+    let junction_id = JunctionId::from_u128(30);
+    let from = CompiledLaneId::new(0);
+    let to = CompiledLaneId::new(1);
+    CompiledNetwork::new_with_graphs(
+        CompiledNetworkHeader::new(SourceRevision::new(1), Sha256Digest::from_bytes([2; 32])),
+        lanes,
+        vec![
+            LaneOrigin::new(CorridorId::from_u128(10), LaneId::from_u128(11)),
+            LaneOrigin::new(CorridorId::from_u128(20), LaneId::from_u128(21)),
+        ],
+        CompiledTopology::new(
+            LaneGraph::new(2, vec![LaneAdjacency::new(from, to, junction_id)]).unwrap(),
+            MovementTable::new(2, vec![CompiledMovement::new(from, to, junction_id)]).unwrap(),
+            MovementGeometryTable::new(
+                1,
+                vec![CompiledMovementCurve::new(
+                    CompiledMovementId::new(0),
+                    CompiledPoint::new(90.0, 0.0),
+                    CompiledPoint::new(100.0, 0.0),
+                    CompiledPoint::new(100.0, 0.0),
+                    CompiledPoint::new(110.0, 0.0),
+                )],
+                Vec::new(),
+            )
+            .unwrap(),
+            PedestrianGraph::new(Vec::new(), Vec::new()).unwrap(),
+        ),
+        CompiledControlTable::new(2, 1, Vec::new(), Vec::new(), Vec::new(), Vec::new()).unwrap(),
+        CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
+    )
+    .unwrap()
+}
+
+fn junction_demand() -> CompiledDemandTable {
+    CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        2,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Car,
+            CompiledLaneId::new(0),
+            CompiledLaneId::new(1),
+            vec![CompiledDemandInterval::new(0.0, 60.0, 3600.0).unwrap()],
+        )],
+    )
+    .unwrap()
+}
+
 fn one_lane_network() -> CompiledNetwork {
     let lanes = LaneTable::new(
         vec![CompiledPoint::new(0.0, 0.0)],
@@ -387,4 +453,111 @@ fn one_lane_network() -> CompiledNetwork {
         CapabilityRequirements::new([CapabilityId::RoadVehiclesBasic]),
     )
     .unwrap()
+}
+
+/// M4 evidence: a car authored as RoadSim demand drives across an exported
+/// junction inside real libsumo and is reported back as a visual frame.
+#[test]
+#[ignore = "requires ROADSIM_SUMO_BRIDGE and ROADSIM_NETCONVERT for exact SUMO 1.27.1"]
+fn real_libsumo_drives_exported_demand_across_an_exported_junction() {
+    let bridge = PathBuf::from(
+        std::env::var_os("ROADSIM_SUMO_BRIDGE").expect("ROADSIM_SUMO_BRIDGE is required"),
+    );
+    let netconvert = PathBuf::from(
+        std::env::var_os("ROADSIM_NETCONVERT").expect("ROADSIM_NETCONVERT is required"),
+    );
+    assert!(bridge.is_absolute(), "ROADSIM_SUMO_BRIDGE must be absolute");
+    assert!(
+        netconvert.is_absolute(),
+        "ROADSIM_NETCONVERT must be absolute"
+    );
+    let root = std::env::temp_dir().join(format!(
+        "roadsim-real-demand-junction-smoke-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    let manager = RunDirectoryManager::new(&root, RunDirectoryLimits::new(1, 8).unwrap()).unwrap();
+    let mut run = manager.create_run(93, 1).unwrap();
+    let network = junction_network();
+    let bundle = export_network(&network, SumoRoadExportOptions::new(13.89).unwrap()).unwrap();
+    let demand = junction_demand();
+    let routes = export_routes(
+        &network,
+        &demand,
+        &bundle,
+        SumoVehicleTypeOptions::new(4.5, 1.8, 13.89).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(routes.flow_mappings().len(), 1);
+
+    std::fs::write(run.path().join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
+    std::fs::write(run.path().join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
+    std::fs::write(
+        run.path().join(SUMO_CONNECTIONS_FILE),
+        bundle.connections_xml(),
+    )
+    .unwrap();
+    std::fs::write(run.path().join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
+    std::fs::write(run.path().join(SUMO_ROUTES_FILE), routes.routes_xml()).unwrap();
+    std::fs::write(
+        run.path().join("roadsim.sumocfg"),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n    <input><net-file value=\"roadsim.net.xml\"/><route-files value=\"{SUMO_ROUTES_FILE}\"/></input>\n    <time><begin value=\"0\"/><end value=\"60\"/></time>\n</configuration>\n"
+        ),
+    )
+    .unwrap();
+    let output = Command::new(netconvert)
+        .current_dir(run.path())
+        .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
+        .args(["--output-file", "roadsim.net.xml"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "netconvert failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    run.mark_running().unwrap();
+
+    let mut client = WorkerClient::spawn(
+        WorkerClientConfig::new(env!("CARGO_BIN_EXE_sumo-worker"), token())
+            .with_argument("--bridge")
+            .with_argument(bridge)
+            .with_work_directory(run.path()),
+    )
+    .unwrap();
+    client
+        .handshake_with_engine(
+            vec![
+                LIFECYCLE_CAPABILITY.to_owned(),
+                VEHICLE_VISUAL_CAPABILITY.to_owned(),
+            ],
+            exact_engine(),
+            REAL_LIBSUMO_TIMEOUT,
+        )
+        .unwrap();
+    let config = WorkerSessionConfig::new("roadsim.sumocfg", 7, 100).unwrap();
+    client
+        .open_session(93, config, REAL_LIBSUMO_TIMEOUT)
+        .unwrap();
+    assert_eq!(
+        client.step_session(93, 20, REAL_LIBSUMO_TIMEOUT).unwrap(),
+        20
+    );
+    let (session_id, _, frame) = wait_for_visual(&client, REAL_LIBSUMO_TIMEOUT);
+    assert_eq!(session_id, 93);
+    assert_eq!(frame.tick(), 20);
+    // The authored flow must actually produce vehicles on the exported edges.
+    assert!(!frame.is_empty());
+    assert_eq!(frame.length_m()[0], 4.5);
+    assert_eq!(frame.width_m()[0], 1.8);
+    assert!(frame.x_m()[0] > 0.0);
+    assert!(frame.heading_rad()[0].abs() < 1.0e-6);
+    client.close_session(93, REAL_LIBSUMO_TIMEOUT).unwrap();
+    client.shutdown(REAL_LIBSUMO_TIMEOUT).unwrap();
+    run.mark_completed().unwrap();
+    drop(run);
+    std::fs::remove_dir_all(root).unwrap();
 }

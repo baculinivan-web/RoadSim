@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/roadsim-app",
+    "crates/roadsim-application",
     "crates/roadsim-backend-api",
     "crates/roadsim-backend-fake",
     "crates/roadsim-backend-sumo",

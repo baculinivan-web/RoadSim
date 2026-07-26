@@ -1,4 +1,5 @@
 use crate::demo;
+use roadsim_application::{RunOrchestrator, RunOutcome, RunRequest, RunState};
 use roadsim_backend_api::{
     BackendArtifact, BackendEvent, CompileOptions, ControlCommand, ControlKind, FrameBatch,
     RunConfig, ScenarioSnapshot, SeedAlgorithmVersion, SessionState, SimulationBackend,
@@ -74,9 +75,9 @@ pub struct SimulationController {
     artifact: BackendArtifact,
     network: Arc<CompiledNetwork>,
     session: Option<Box<dyn SimulationSession>>,
-    state: UiSimulationState,
+    /// Single source of truth for which lifecycle actions are legal.
+    orchestrator: RunOrchestrator,
     frame: Option<FrameBatch>,
-    tick: SimulationTick,
     next_control_id: u64,
     error_code: Option<&'static str>,
 }
@@ -96,20 +97,24 @@ impl SimulationController {
                 .await
         })
         .map_err(|error| SimulationError(error.to_string()))?;
+        let mut orchestrator = RunOrchestrator::new();
+        // The artifact above is the compile step the orchestrator asks for.
+        orchestrator
+            .request(RunRequest::Prepare)
+            .map_err(|error| SimulationError(error.code().as_str().to_owned()))?;
         let mut controller = Self {
             backend,
             artifact,
             network,
             session: None,
-            state: UiSimulationState::Ready,
+            orchestrator,
             frame: None,
-            tick: SimulationTick::new(0),
             next_control_id: 1,
             error_code: None,
         };
         if auto_start {
             controller.start();
-            if controller.state == UiSimulationState::Failed {
+            if controller.state() == UiSimulationState::Failed {
                 return Err(SimulationError(
                     controller
                         .error_code
@@ -133,12 +138,18 @@ impl SimulationController {
 
     #[must_use]
     pub const fn state(&self) -> UiSimulationState {
-        self.state
+        ui_state_for(self.orchestrator.state())
+    }
+
+    /// Whether the UI may offer this action; invalid actions stay disabled.
+    #[must_use]
+    pub const fn accepts(&self, request: RunRequest) -> bool {
+        self.orchestrator.accepts(request)
     }
 
     #[must_use]
     pub const fn tick(&self) -> SimulationTick {
-        self.tick
+        self.orchestrator.tick()
     }
 
     #[must_use]
@@ -149,17 +160,19 @@ impl SimulationController {
     #[must_use]
     pub fn observation(&self) -> SimulationObservation {
         SimulationObservation {
-            state: self.state,
-            tick: self.tick,
+            state: self.state(),
+            tick: self.tick(),
             agent_count: self.frame.as_ref().map_or(0, |frame| frame.agents().len()),
         }
     }
 
     pub fn start(&mut self) {
-        if matches!(
-            self.state,
-            UiSimulationState::Running | UiSimulationState::Paused
-        ) {
+        if self.orchestrator.state().is_terminal() && self.orchestrator.accepts(RunRequest::Reset) {
+            // A finished run is released before the same artifact runs again.
+            self.request_or_report(RunRequest::Reset);
+            self.session = None;
+        }
+        if !self.request_or_report(RunRequest::Start) {
             return;
         }
         let run = match RunConfig::new(
@@ -178,9 +191,7 @@ impl SimulationController {
         match pollster::block_on(self.backend.start(self.artifact, run)) {
             Ok(session) => {
                 self.session = Some(session);
-                self.state = UiSimulationState::Running;
                 self.frame = None;
-                self.tick = SimulationTick::new(0);
                 self.error_code = None;
             }
             Err(error) => self.fail(error.code().as_str()),
@@ -188,29 +199,37 @@ impl SimulationController {
     }
 
     pub fn pause(&mut self) {
-        self.control(ControlKind::Pause, UiSimulationState::Paused);
+        if self.request_or_report(RunRequest::Pause) {
+            self.control(ControlKind::Pause);
+        }
     }
 
     pub fn resume(&mut self) {
-        self.control(ControlKind::Resume, UiSimulationState::Running);
+        if self.request_or_report(RunRequest::Resume) {
+            self.control(ControlKind::Resume);
+        }
     }
 
     pub fn stop(&mut self) {
+        if !self.request_or_report(RunRequest::Cancel) {
+            return;
+        }
         let Some(session) = &mut self.session else {
+            self.fail("app.simulation.session_missing");
             return;
         };
         match pollster::block_on(session.cancel()) {
             Ok(summary) => {
-                self.tick = summary.final_tick();
-                self.state = UiSimulationState::Cancelled;
-                self.session = None;
+                let tick = summary.final_tick();
+                let _ = self.orchestrator.observe_tick(tick);
+                self.finish(RunOutcome::Cancelled);
             }
             Err(error) => self.fail(error.code().as_str()),
         }
     }
 
     pub fn advance(&mut self) {
-        if self.state != UiSimulationState::Running {
+        if self.state() != UiSimulationState::Running {
             return;
         }
         let Some(session) = &mut self.session else {
@@ -218,49 +237,78 @@ impl SimulationController {
             return;
         };
         match pollster::block_on(session.next_event()) {
-            Ok(BackendEvent::StateChanged(state)) => {
-                self.state = ui_state(state);
-            }
+            Ok(BackendEvent::StateChanged(state)) => self.observe_session_state(state),
             Ok(BackendEvent::Frame(frame)) => {
-                self.tick = frame.tick();
+                let _ = self.orchestrator.observe_tick(frame.tick());
                 self.frame = Some(frame);
             }
             Ok(BackendEvent::Completed(summary)) => {
-                self.tick = summary.final_tick();
-                self.state = UiSimulationState::Completed;
-                self.session = None;
+                let tick = summary.final_tick();
+                let _ = self.orchestrator.observe_tick(tick);
+                self.finish(RunOutcome::Completed);
             }
             Err(error) => self.fail(error.code().as_str()),
         }
     }
 
-    fn control(&mut self, kind: ControlKind, next_state: UiSimulationState) {
+    /// Applies a lifecycle request, reporting a refusal as a stable code.
+    fn request_or_report(&mut self, request: RunRequest) -> bool {
+        match self.orchestrator.request(request) {
+            Ok(_) => {
+                self.error_code = None;
+                true
+            }
+            Err(error) => {
+                self.error_code = Some(error.code().as_str());
+                false
+            }
+        }
+    }
+
+    fn observe_session_state(&mut self, state: SessionState) {
+        if self.orchestrator.observe_session_state(state).is_err() {
+            self.fail("app.simulation.session_missing");
+            return;
+        }
+        if self.orchestrator.state().is_terminal() {
+            self.session = None;
+        }
+    }
+
+    fn finish(&mut self, outcome: RunOutcome) {
+        let _ = self.orchestrator.finish(outcome);
+        self.session = None;
+    }
+
+    fn control(&mut self, kind: ControlKind) {
         let Some(session) = &mut self.session else {
+            self.fail("app.simulation.session_missing");
             return;
         };
         let control_id = self.next_control_id;
         self.next_control_id = self.next_control_id.saturating_add(1);
         let command = ControlCommand::new(control_id, control_id, kind);
-        match pollster::block_on(session.control(command)) {
-            Ok(_) => self.state = next_state,
-            Err(error) => self.fail(error.code().as_str()),
+        if let Err(error) = pollster::block_on(session.control(command)) {
+            self.fail(error.code().as_str());
         }
     }
 
     fn fail(&mut self, code: &'static str) {
-        self.state = UiSimulationState::Failed;
+        let _ = self.orchestrator.finish(RunOutcome::Failed);
         self.error_code = Some(code);
         self.session = None;
     }
 }
 
-const fn ui_state(state: SessionState) -> UiSimulationState {
+/// Projects the orchestrated run state onto the UI vocabulary.
+const fn ui_state_for(state: RunState) -> UiSimulationState {
     match state {
-        SessionState::Running => UiSimulationState::Running,
-        SessionState::Paused => UiSimulationState::Paused,
-        SessionState::Completed => UiSimulationState::Completed,
-        SessionState::Cancelled => UiSimulationState::Cancelled,
-        SessionState::Failed => UiSimulationState::Failed,
+        RunState::Idle | RunState::Prepared => UiSimulationState::Ready,
+        RunState::Running => UiSimulationState::Running,
+        RunState::Paused => UiSimulationState::Paused,
+        RunState::Completed => UiSimulationState::Completed,
+        RunState::Cancelled => UiSimulationState::Cancelled,
+        RunState::Failed => UiSimulationState::Failed,
     }
 }
 

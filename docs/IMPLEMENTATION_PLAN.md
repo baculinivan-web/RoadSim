@@ -544,8 +544,60 @@ Bundle сохраняет `CompiledLaneId → LaneOrigin → SUMO edge/lane` map
 явную скорость и блокирует неподдерживаемые lane uses с Design object evidence.
 Exact `netconvert 1.27.1` принимает export, после чего opt-in worker smoke
 выполняет пять tick на сгенерированной CSN-дороге. Junction topology, demand и
-routes намеренно остаются E10-T04/E10-T06; CSN с movements до T04 явно
-отклоняется кодом `backend.sumo.junction_movements.unsupported` с object refs.
+routes намеренно остаются E10-T06; junction topology добавлена E10-T04.
+
+Статус E10-T04: 🟢 `roadsim-backend-sumo` экспортирует compiled junction
+movements как полный explicit SUMO connection table: одно movement — ровно одна
+`<connection>`, узел с movements получает `type="priority"`, а
+`SUMO_NETCONVERT_INPUT_ARGUMENTS` отключает turnarounds и эвристические связи.
+`SumoConnectionMapping` сохраняет `CompiledMovementId → JunctionId → SUMO
+edge/lane`. Неполный набор movements, разорванные endpoints и один узел с двумя
+junction ID блокируются object-linked diagnostics. ADR-022 фиксирует, что
+приоритет не выдумывается backend: RoadSim не авторизует junction priority, а
+right-of-way между уже зафиксированными связями считает pinned `netconvert
+1.27.1`. Pedestrian graph и traffic controls явно отклоняются кодами
+`backend.sumo.pedestrian_network.unsupported` и
+`backend.sumo.traffic_controls.unsupported` и остаются E10-T07/E10-T05.
+
+Статус E10-T05: 🟢 активная fixed-time программа контроллера экспортируется как
+один `<tlLogic type="static">` в `roadsim.tll.xml`: узел получает
+`type="traffic_light"`, связи — `tl`/`linkIndex` в compact movement order, а
+`SumoSignalMapping` сохраняет `SignalControllerId → SignalProgramId → link
+index → CompiledMovementId`. Authored порядок фаз, длительности и per-group
+indication сохраняются один к одному; `Green` экспортируется как major `G`,
+потому что compiler уже блокирует одновременно зелёные конфликтующие movements.
+Movement сигнализированного узла без группы отклоняется
+(`backend.sumo.signal_movement.unbound`), контроллер неизвестного узла —
+`backend.sumo.signal_junction.unknown`. Authored `intergreen > 0` намеренно не
+экспортируется: распределение clearance между amber и all-red требует
+подтверждённой трактовки domain owner (ADR-022, п. 10) и блокируется кодом
+`backend.sumo.signal_intergreen.unsupported`. Stop positions остаются
+неподдержанными отдельным кодом.
+
+Статус E10-T06: 🟢 добавлен отдельный compiled demand contract
+(`CompiledDemandTable`, schema v1): спрос — состояние сценария, поэтому он не
+входит в CSN и одна и та же сеть запускается с разными профилями без
+перекомпиляции топологии. `compile_demand` резолвит authored corridor endpoints
+в единственную boundary lane (source без предшественника, sink без
+преемника), блокирует неизвестный профиль, неоднозначный endpoint,
+недостижимую пару и нецелевой mode до backend. Экспортер переводит каждый
+authored interval ровно в один `<flow>` с явными `begin`/`end`/`vehsPerHour` —
+arrival process и rate не выдумываются, — и сохраняет
+`DemandFlowId → interval index → SUMO flow/edges`. Маршрут между boundary edges
+пока считает SUMO по exported connection table; authored full routes остаются
+следующим шагом. Opt-in smoke на exact SUMO `1.27.1` прогоняет authored car
+через exported junction и требует непустой visual frame — это исполняемое
+доказательство M4 для автомобильного сценария.
+
+Статус E10-T07: ⛔ заблокирована. SUMO выражает пешехода как `<personFlow>` со
+стадиями `walk` между edges, а authored demand задан между walking areas. В
+Design Model нет ни одного typed reference между `WalkingArea` и `Sidewalk`
+(crossing связывает две walking areas, sidewalk знает только corridor/side/
+station), поэтому построить endpoint для `walk` можно лишь геометрической
+догадкой, меняющей маршруты и метрики UC-03. Пробел зафиксирован в ADR-023;
+задача ждёт follow-up к E01-T06, который добавит связь «walking area ↔
+pedestrian edge». До этого экспорт продолжает отклонять непустой pedestrian
+graph и pedestrian demand явными кодами.
 
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует
@@ -572,6 +624,31 @@ person/signal/queue batches, benchmark и Arrow/shared-memory решение о�
 | E11-T07 | Performance instrumentation | T01–T05 | frame/IPC/run metrics | dropped visual frames visible in diagnostics |
 
 **M4 exit:** на эталонном регулируемом перекрестке движутся автомобили и пешеходы, сигналы отображаются собственным renderer, UI pause/cancel работает, worker crash не теряет проект.
+
+Статус E11-T01: 🟢 добавлен отдельный `roadsim-application` с backend-agnostic
+`RunOrchestrator`: `Idle → Prepared → Running ⇄ Paused → Completed/Cancelled/
+Failed`, restart через `Reset` возвращает к тому же prepared artifact. Каждый
+принятый запрос возвращает ровно один `RunIntent`, который выполняет caller, —
+state machine не делает I/O и тестируется без движка и GPU. Cancel только
+запрашивается: run завершает backend, поэтому медленный cancel не выглядит
+завершённым. Все три terminal outcome, повторный запуск, незапрошенное
+изменение состояния движком и каждый invalid transition покрыты тестами;
+отказ — стабильный код, а не panic, и не меняет состояние.
+
+Статус E11-T02: 🟡 desktop shell берёт enablement кнопок Start/Pause/Resume/
+Stop из `RunOrchestrator::accepts`, поэтому UI не может предложить переход,
+который run отклонит, а отказ показывается стабильным кодом
+`application.run.invalid_transition`. Полноценная compile/progress-панель и
+diagnostics остаются в T02/E06-T09.
+
+Статус E11-T03: 🟢 `FrameSnapshotAdapter` переводит backend frame в GPU-ready
+SoA с переиспользуемыми буферами: установившийся run не выделяет память на
+кадр, а превышение явного bound и non-finite состояние отклоняются стабильным
+кодом, оставляя предыдущий snapshot целым. Backend agent ID и compact lane ID
+сохраняются без переиндексации, поэтому instance остаётся связанным с моделью;
+`f64 → f32` сужение выполняется только на границе рендера. Полный маппинг до
+Design-объекта конкретного автомобиля зависит от per-agent demand origin и
+остаётся с E10-T06/E10-T08.
 
 ## 20. Epic E12 — Спрос, автобусы, трамвай и сценарии
 

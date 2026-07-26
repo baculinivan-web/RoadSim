@@ -86,8 +86,11 @@ cargo +1.88.0 test -p sumo-worker --test lifecycle \
 из exact commit `7717f2379d9e314a0c81c5cec748444de06a2a91`. Он закрывает
 core lifecycle E10-T02 и проверяет frame для `rs_agent_0` с footprint
 4,5 × 1,8 м. Второй выбранный test materializes typed
-`roadsim-backend-sumo` straight-network export, проверяет source mapping и
-запускает его тем же worker, закрывая E10-T03 road/lane scope. Эти tests не
+`roadsim-backend-sumo` network export, проверяет source mapping и
+запускает его тем же worker, закрывая E10-T03 road/lane scope. Junction
+connection table E10-T04 покрыта opt-in `netconvert` test
+`exact_netconvert_accepts_exported_four_arm_junction` в
+`crates/roadsim-backend-sumo`. Эти tests не
 являются clean-machine/package evidence для Windows, macOS x64 и Linux;
 воспроизводимый builder, packages и checksums остаются в E10-T11.
 
