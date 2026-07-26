@@ -608,6 +608,18 @@ station), поэтому построить endpoint для `walk` можно л
 pedestrian edge». До этого экспорт продолжает отклонять непустой pedestrian
 graph и pedestrian demand явными кодами.
 
+Статус E10 (client slice, T02→UI): 🟢 `roadsim-backend-sumo-client` реализует
+versioned backend contract поверх worker IPC: compile материализует typed
+export bundle в bounded run directory (journal Created→Running→Completed/
+Failed) и вызывает pinned `netconvert`; start поднимает worker с handshake по
+exact engine identity; события переводят latest-wins visual frames в backend
+frames без изобретения агентов (отсутствующий кадр — пустой batch на
+достигнутом tick). Pause/Resume — клиентское степание, cancel идёт через
+worker; contract suite выполняется против protocol worker-stub без SUMO.
+Desktop app включает этот backend переменными `ROADSIM_SUMO_WORKER`/
+`ROADSIM_NETCONVERT` (+ `ROADSIM_SUMO_BRIDGE`); неполная конфигурация — ошибка,
+а не тихий fallback.
+
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует
 отсортированный protocol-v3 SoA frame через отдельный latest-wins writer, не
@@ -647,8 +659,9 @@ state machine не делает I/O и тестируется без движк�
 Статус E11-T02: 🟡 desktop shell берёт enablement кнопок Start/Pause/Resume/
 Stop из `RunOrchestrator::accepts`, поэтому UI не может предложить переход,
 который run отклонит, а отказ показывается стабильным кодом
-`application.run.invalid_transition`. Полноценная compile/progress-панель и
-diagnostics остаются в T02/E06-T09.
+`application.run.invalid_transition`. Панель показывает активный backend
+(fake или SUMO worker), выбранный из окружения без тихого fallback.
+Полноценная compile/progress-панель и diagnostics остаются в T02/E06-T09.
 
 Статус E11-T03: 🟢 `FrameSnapshotAdapter` переводит backend frame в GPU-ready
 SoA с переиспользуемыми буферами: установившийся run не выделяет память на

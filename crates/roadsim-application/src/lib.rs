@@ -308,6 +308,9 @@ impl RunOrchestrator {
 
 /// Hard ceiling on agents in one snapshot, mirroring the visual batch limit.
 pub const MAX_SNAPSHOT_AGENTS: usize = 65_536;
+/// Sentinel in [`FrameSnapshot::lane_ids`] for an agent whose backend did not
+/// report a compiled lane. Compact lane IDs never reach this value.
+pub const LANE_UNKNOWN: u32 = u32::MAX;
 
 /// Why a frame could not be turned into a renderable snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -513,7 +516,9 @@ impl FrameSnapshotAdapter {
         snapshot.width_m.clear();
         for agent in agents {
             snapshot.agent_ids.push(agent.agent_id());
-            snapshot.lane_ids.push(agent.lane_id().get());
+            snapshot
+                .lane_ids
+                .push(agent.lane_id().map_or(LANE_UNKNOWN, |lane| lane.get()));
             snapshot.x_m.push(agent.x_m() as f32);
             snapshot.y_m.push(agent.y_m() as f32);
             snapshot.heading_rad.push(agent.heading_rad() as f32);

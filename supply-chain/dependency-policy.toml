@@ -71,6 +71,22 @@ to = [
 rationale = "ARCHITECTURE §4/§8: compiler transforms an immutable Design snapshot into backend-independent CSN without UI or backend implementation dependencies"
 
 [[rules]]
+id = "sumo-client-is-ui-and-domain-independent"
+from = ["roadsim-backend-sumo-client"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-commands",
+    "roadsim-domain",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4: the SUMO backend client binds the backend contract to the worker IPC boundary and must not depend on the desktop UI or the mutable Design Model"
+
+[[rules]]
 id = "application-is-ui-and-backend-implementation-independent"
 from = ["roadsim-application"]
 to = [

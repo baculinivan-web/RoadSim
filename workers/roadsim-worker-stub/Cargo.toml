@@ -11,6 +11,12 @@ publish.workspace = true
 roadsim-worker-protocol = { version = "0.1.0", path = "../../crates/roadsim-worker-protocol" }
 
 [dev-dependencies]
+pollster.workspace = true
+roadsim-backend-api = { version = "0.1.0", path = "../../crates/roadsim-backend-api" }
+roadsim-backend-sumo = { version = "0.1.0", path = "../../crates/roadsim-backend-sumo" }
+roadsim-backend-sumo-client = { version = "0.1.0", path = "../../crates/roadsim-backend-sumo-client" }
+roadsim-compiled-network = { version = "0.1.0", path = "../../crates/roadsim-compiled-network" }
+roadsim-types = { version = "0.1.0", path = "../../crates/roadsim-types" }
 roadsim-worker-client = { version = "0.1.0", path = "../../crates/roadsim-worker-client" }
 
 [lints]

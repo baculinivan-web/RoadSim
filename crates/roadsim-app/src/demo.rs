@@ -1,15 +1,71 @@
 use roadsim_compiled_network::{CompiledNetwork, SourceRevision};
 use roadsim_compiler::{CompileOptions, GeometryContext, TessellationOptions, compile_project};
 use roadsim_domain::{
-    AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CrossSectionLayout,
-    CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance, DesignCatalog,
-    EngineeringCrsDescriptor, EngineeringUnit, LaneDefinition, LaneDirection, LaneSlice, LaneUse,
-    LocalOrigin, Point2Meters, Project, ProjectMetadata, ReferenceLine, ReferenceLineElement,
-    ReferenceLinePose, VerticalDatum,
+    AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CorridorEnd, CorridorEndpointRef,
+    CrossSectionLayout, CrossSectionProfile, CrossSectionSection, CrsDefinition, CrsProvenance,
+    DemandEndpoint, DemandFlow, DemandInterval, DemandMode, DemandProfile, DesignCatalog,
+    EngineeringCrsDescriptor, EngineeringUnit, Junction, LaneDefinition, LaneDirection, LaneSlice,
+    LaneUse, LocalOrigin, Point2Meters, Project, ProjectMetadata, ReferenceLine,
+    ReferenceLineElement, ReferenceLinePose, StudyCatalog, VerticalDatum,
 };
 use roadsim_types::{
-    CoordinateMeters, CorridorId, HeadingRadians, LaneId, LengthMeters, ProjectId,
+    CoordinateMeters, CorridorId, DemandFlowId, DemandProfileId, DurationSeconds, FlowRatePerHour,
+    HeadingRadians, JunctionId, LaneId, LengthMeters, ProjectId,
 };
+
+/// Demand profile the demo project authors between its two corridors.
+pub const DEMO_DEMAND_PROFILE: u128 = 0x130;
+
+/// One straight two-lane corridor of the demo network.
+fn demo_corridor(
+    corridor_id: u128,
+    left_lane_id: u128,
+    right_lane_id: u128,
+    start_x: f64,
+) -> Result<Corridor, String> {
+    let corridor_id = CorridorId::from_u128(corridor_id);
+    let left_lane_id = LaneId::from_u128(left_lane_id);
+    let right_lane_id = LaneId::from_u128(right_lane_id);
+    let length = |value| LengthMeters::try_new(value).map_err(|error| error.to_string());
+    let reference_line = ReferenceLine::new(
+        ReferenceLinePose::new(
+            Point2Meters::new(
+                CoordinateMeters::try_new(start_x).map_err(|error| error.to_string())?,
+                CoordinateMeters::try_new(0.0).map_err(|error| error.to_string())?,
+            ),
+            HeadingRadians::try_new(0.0).map_err(|error| error.to_string())?,
+        ),
+        vec![ReferenceLineElement::line(length(60.0)?).map_err(|error| error.to_string())?],
+    )
+    .map_err(|error| error.to_string())?;
+    let profile = CrossSectionProfile::new(vec![CrossSectionSection::new(
+        length(0.0)?,
+        CrossSectionLayout::new(
+            vec![LaneSlice::new(left_lane_id, length(3.5)?).map_err(|error| error.to_string())?],
+            vec![LaneSlice::new(right_lane_id, length(3.5)?).map_err(|error| error.to_string())?],
+        )
+        .map_err(|error| error.to_string())?,
+    )])
+    .map_err(|error| error.to_string())?;
+    Corridor::new(
+        corridor_id,
+        reference_line,
+        vec![
+            LaneDefinition::new(
+                left_lane_id,
+                LaneDirection::AgainstReference,
+                LaneUse::GeneralTraffic,
+            ),
+            LaneDefinition::new(
+                right_lane_id,
+                LaneDirection::AlongReference,
+                LaneUse::GeneralTraffic,
+            ),
+        ],
+        profile,
+    )
+    .map_err(|error| error.to_string())
+}
 
 /// Compiles any Design project with the demo's numerical policy.
 pub fn compile(project: &Project) -> Result<CompiledNetwork, String> {
@@ -30,49 +86,38 @@ pub fn compile(project: &Project) -> Result<CompiledNetwork, String> {
     .map_err(|error| error.to_string())
 }
 
-/// Builds the deterministic straight-road demo Design project.
+/// Builds the deterministic demo Design project: two straight corridors
+/// joined by one junction, plus an authored car demand profile between them.
 pub fn project() -> Result<Project, String> {
-    let corridor_id = CorridorId::from_u128(0x100);
-    let left_lane_id = LaneId::from_u128(0x101);
-    let right_lane_id = LaneId::from_u128(0x102);
-    let length = |value| LengthMeters::try_new(value).map_err(|error| error.to_string());
-
-    let reference_line = ReferenceLine::new(
-        ReferenceLinePose::new(
-            Point2Meters::new(
-                CoordinateMeters::try_new(-60.0).map_err(|error| error.to_string())?,
-                CoordinateMeters::try_new(0.0).map_err(|error| error.to_string())?,
-            ),
-            HeadingRadians::try_new(0.0).map_err(|error| error.to_string())?,
-        ),
-        vec![ReferenceLineElement::line(length(120.0)?).map_err(|error| error.to_string())?],
+    let corridor_a = demo_corridor(0x100, 0x101, 0x102, -60.0)?;
+    let corridor_b = demo_corridor(0x110, 0x111, 0x112, 0.0)?;
+    let junction = Junction::new(
+        JunctionId::from_u128(0x120),
+        vec![
+            CorridorEndpointRef::new(CorridorId::from_u128(0x100), CorridorEnd::End),
+            CorridorEndpointRef::new(CorridorId::from_u128(0x110), CorridorEnd::Start),
+        ],
     )
     .map_err(|error| error.to_string())?;
-    let profile = CrossSectionProfile::new(vec![CrossSectionSection::new(
-        length(0.0)?,
-        CrossSectionLayout::new(
-            vec![LaneSlice::new(left_lane_id, length(3.5)?).map_err(|error| error.to_string())?],
-            vec![LaneSlice::new(right_lane_id, length(3.5)?).map_err(|error| error.to_string())?],
-        )
-        .map_err(|error| error.to_string())?,
-    )])
-    .map_err(|error| error.to_string())?;
-    let corridor = Corridor::new(
-        corridor_id,
-        reference_line,
+    let demand = DemandProfile::new(
+        DemandProfileId::from_u128(DEMO_DEMAND_PROFILE),
         vec![
-            LaneDefinition::new(
-                left_lane_id,
-                LaneDirection::AgainstReference,
-                LaneUse::GeneralTraffic,
-            ),
-            LaneDefinition::new(
-                right_lane_id,
-                LaneDirection::AlongReference,
-                LaneUse::GeneralTraffic,
-            ),
+            DemandFlow::new(
+                DemandFlowId::from_u128(0x131),
+                DemandMode::Car,
+                DemandEndpoint::Corridor(CorridorId::from_u128(0x100)),
+                DemandEndpoint::Corridor(CorridorId::from_u128(0x110)),
+                vec![
+                    DemandInterval::new(
+                        DurationSeconds::try_new(0.0).map_err(|error| error.to_string())?,
+                        DurationSeconds::try_new(600.0).map_err(|error| error.to_string())?,
+                        FlowRatePerHour::try_new(360.0).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                ],
+            )
+            .map_err(|error| error.to_string())?,
         ],
-        profile,
     )
     .map_err(|error| error.to_string())?;
 
@@ -93,13 +138,25 @@ pub fn project() -> Result<Project, String> {
         CrsProvenance::new("built-in demo", "identity", "east-north")
             .map_err(|error| error.to_string())?,
     );
-    Ok(Project::with_catalog(
+    Project::with_catalog(
         ProjectId::from_u128(0x10),
-        ProjectMetadata::new("Deterministic straight-road demo")
+        ProjectMetadata::new("Deterministic demo intersection")
             .map_err(|error| error.to_string())?,
         coordinate_reference,
-        DesignCatalog::new(vec![corridor]).map_err(|error| error.to_string())?,
-    ))
+        DesignCatalog::with_multimodal(
+            vec![corridor_a, corridor_b],
+            vec![junction],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )
+        .map_err(|error| error.to_string())?,
+    )
+    .with_study_catalog(
+        StudyCatalog::new(vec![demand], vec![], vec![]).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

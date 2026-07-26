@@ -5,12 +5,14 @@
 //! wall-clock source.
 
 use async_trait::async_trait;
-use roadsim_compiled_network::{CapabilityId, CompiledLaneId, CompiledNetwork};
+use roadsim_compiled_network::{
+    CapabilityId, CompiledDemandTable, CompiledLaneId, CompiledNetwork,
+};
 use roadsim_types::{RootSeed, Sha256Digest, SimulationTick};
 use serde::Serialize;
 use std::{collections::BTreeSet, error::Error, fmt, sync::Arc};
 
-pub const BACKEND_API_VERSION: u32 = 1;
+pub const BACKEND_API_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct BackendId(&'static str);
@@ -223,8 +225,35 @@ impl ScenarioSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CompileOptions;
+#[derive(Clone, Debug, Default)]
+pub struct CompileOptions {
+    /// Scenario demand the backend materializes, when the scenario has any.
+    ///
+    /// Demand is per-scenario input, not backend configuration: the same
+    /// compiled network runs with different profiles without recompiling
+    /// topology. A backend that cannot express the given demand must fail
+    /// compile, never silently run empty.
+    demand: Option<Arc<CompiledDemandTable>>,
+}
+
+impl CompileOptions {
+    /// Options for a scenario without any vehicle demand.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self { demand: None }
+    }
+
+    #[must_use]
+    pub fn with_demand(mut self, demand: Arc<CompiledDemandTable>) -> Self {
+        self.demand = Some(demand);
+        self
+    }
+
+    #[must_use]
+    pub const fn demand(&self) -> Option<&Arc<CompiledDemandTable>> {
+        self.demand.as_ref()
+    }
+}
 
 /// Opaque backend-owned artifact identity. It contains no implementation payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -470,7 +499,7 @@ impl AgentFootprint {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct AgentState {
     agent_id: u32,
-    lane_id: CompiledLaneId,
+    lane_id: Option<CompiledLaneId>,
     x_m: f64,
     y_m: f64,
     heading_rad: f64,
@@ -480,7 +509,7 @@ pub struct AgentState {
 impl AgentState {
     pub fn new(
         agent_id: u32,
-        lane_id: CompiledLaneId,
+        lane_id: Option<CompiledLaneId>,
         x_m: f64,
         y_m: f64,
         heading_rad: f64,
@@ -507,8 +536,12 @@ impl AgentState {
         self.agent_id
     }
 
+    /// Compiled lane the agent occupies, when the backend reports one.
+    ///
+    /// The SUMO worker does not yet map runtime positions back to compiled
+    /// lanes, so `None` means "not reported", never "off the network".
     #[must_use]
-    pub const fn lane_id(self) -> CompiledLaneId {
+    pub const fn lane_id(self) -> Option<CompiledLaneId> {
         self.lane_id
     }
 
@@ -669,7 +702,8 @@ mod tests {
     #[test]
     fn agent_state_rejects_invalid_geometry_and_preserves_metric_footprint() {
         let footprint = AgentFootprint::new(4.5, 1.8).unwrap();
-        let state = AgentState::new(1, CompiledLaneId::new(2), 10.0, 20.0, 0.5, footprint).unwrap();
+        let state =
+            AgentState::new(1, Some(CompiledLaneId::new(2)), 10.0, 20.0, 0.5, footprint).unwrap();
         assert_eq!(state.footprint().length_m(), 4.5);
         assert_eq!(state.footprint().width_m(), 1.8);
         assert!(AgentFootprint::new(0.0, 1.8).is_err());
@@ -677,7 +711,7 @@ mod tests {
         assert!(
             AgentState::new(
                 1,
-                CompiledLaneId::new(2),
+                Some(CompiledLaneId::new(2)),
                 f64::INFINITY,
                 20.0,
                 0.5,

@@ -9,7 +9,8 @@ use crate::demo;
 use roadsim_commands::{
     CommandHistory, CreateCorridor, DeleteCorridor, ModelState, UpdateCorridor,
 };
-use roadsim_compiled_network::CompiledNetwork;
+use roadsim_compiled_network::{CompiledDemandTable, CompiledNetwork};
+use roadsim_compiler::compile_demand;
 use roadsim_domain::{
     Corridor, CrossSectionLayout, CrossSectionProfile, CrossSectionSection, LaneDefinition,
     LaneDirection, LaneUse, Point2Meters, ReferenceLine, ReferenceLineElement, ReferenceLinePose,
@@ -37,6 +38,7 @@ pub struct EditorState {
     model: ModelState,
     history: CommandHistory,
     network: Arc<CompiledNetwork>,
+    demand: Arc<CompiledDemandTable>,
     /// Y offset for the next added parallel road, so IDs and geometry differ.
     next_road_index: u64,
     error_code: Option<String>,
@@ -46,6 +48,14 @@ impl EditorState {
     pub fn new() -> Result<Self, String> {
         let model = ModelState::new(demo::project()?);
         let network = Arc::new(demo::compile(model.project())?);
+        let demand = Arc::new(
+            compile_demand(
+                model.project(),
+                &network,
+                roadsim_types::DemandProfileId::from_u128(demo::DEMO_DEMAND_PROFILE),
+            )
+            .map_err(|error| error.to_string())?,
+        );
         let history = CommandHistory::new(
             &model,
             NonZeroUsize::new(HISTORY_CAPACITY).expect("capacity is non-zero"),
@@ -54,6 +64,7 @@ impl EditorState {
             model,
             history,
             network,
+            demand,
             next_road_index: 1,
             error_code: None,
         })
@@ -62,6 +73,12 @@ impl EditorState {
     #[must_use]
     pub const fn network(&self) -> &Arc<CompiledNetwork> {
         &self.network
+    }
+
+    /// Compiled demand of the demo profile against the current network.
+    #[must_use]
+    pub const fn demand(&self) -> &Arc<CompiledDemandTable> {
+        &self.demand
     }
 
     #[must_use]
@@ -192,9 +209,25 @@ impl EditorState {
     /// Compiles the edited project; on failure the previous network stays
     /// current and the compiler diagnostic is surfaced instead.
     fn recompile(&mut self) {
-        match demo::compile(self.model.project()) {
-            Ok(network) => self.network = Arc::new(network),
-            Err(code) => self.error_code = Some(code),
+        let network = match demo::compile(self.model.project()) {
+            Ok(network) => Arc::new(network),
+            Err(code) => {
+                self.error_code = Some(code);
+                return;
+            }
+        };
+        // Demand is resolved against compact lane IDs, so it is recompiled
+        // together with the network it indexes into.
+        match compile_demand(
+            self.model.project(),
+            &network,
+            roadsim_types::DemandProfileId::from_u128(demo::DEMO_DEMAND_PROFILE),
+        ) {
+            Ok(demand) => {
+                self.network = network;
+                self.demand = Arc::new(demand);
+            }
+            Err(error) => self.error_code = Some(error.code().as_str().to_owned()),
         }
     }
 }
@@ -355,27 +388,32 @@ mod tests {
     fn adding_and_deleting_a_parallel_road_round_trips_the_network() {
         let mut editor = EditorState::new().unwrap();
         let baseline = editor.network().header().content_hash();
-        assert_eq!(editor.network().lanes().len(), 2);
+        assert_eq!(editor.network().lanes().len(), 4);
 
         editor.add_parallel_road();
         assert_eq!(editor.error_code(), None);
-        assert_eq!(editor.network().lanes().len(), 4);
-        assert_eq!(editor.corridor_ids().len(), 2);
+        assert_eq!(editor.network().lanes().len(), 6);
+        assert_eq!(editor.corridor_ids().len(), 3);
 
-        let added = editor.corridor_ids()[1];
+        let added = *editor.corridor_ids().last().unwrap();
         editor.delete_corridor(added);
         assert_eq!(editor.error_code(), None);
-        assert_eq!(editor.network().lanes().len(), 2);
+        assert_eq!(editor.network().lanes().len(), 4);
         assert_eq!(editor.network().header().content_hash(), baseline);
     }
 
     #[test]
-    fn the_last_road_cannot_be_deleted_because_empty_networks_do_not_compile() {
+    fn a_junction_referenced_corridor_cannot_be_deleted_silently() {
         let mut editor = EditorState::new().unwrap();
-        let only = editor.corridor_ids()[0];
-        editor.delete_corridor(only);
-        assert_eq!(editor.error_code(), Some("editor.corridor.last_road"));
-        assert_eq!(editor.corridor_ids().len(), 1);
+        let baseline = editor.network().header().content_hash();
+        let junction_corridor = editor.corridor_ids()[0];
+        editor.delete_corridor(junction_corridor);
+        // The demo junction references this corridor, so the domain refuses
+        // the mutation instead of leaving a dangling approach.
+        assert_eq!(editor.error_code(), Some("command.domain_invariant"));
+        assert_eq!(editor.corridor_ids().len(), 2);
+        assert_eq!(editor.network().header().content_hash(), baseline);
+        assert!(!editor.can_undo());
     }
 
     #[test]

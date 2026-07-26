@@ -193,7 +193,7 @@ impl FakeSession {
                     lane.end().y_m() - lane.start().y_m(),
                     lane.end().x_m() - lane.start().x_m(),
                 );
-                AgentState::new(agent_id, lane_id, x_m, y_m, heading_rad, footprint)
+                AgentState::new(agent_id, Some(lane_id), x_m, y_m, heading_rad, footprint)
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(FrameBatch::new(SimulationTick::new(tick), agents))

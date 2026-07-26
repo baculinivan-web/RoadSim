@@ -177,8 +177,30 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   когда run неактивен. Отказ (недопустимая ширина, последняя дорога, неизвестный
   объект) показывается стабильным кодом и не меняет ни revision, ни network.
 
+- Добавлен `roadsim-backend-sumo-client` — первый production-path backend:
+  compile материализует export bundle в bounded run directory и вызывает pinned
+  `netconvert`, start поднимает изолированный worker-процесс, а событийный цикл
+  переводит SoA visual frames в backend frames. Pause/Resume останавливают и
+  возобновляют клиентское степание, cancel завершается через worker; невозможный
+  переход и terminal session отклоняются стабильными кодами. Контракт покрыт
+  тестами против protocol worker-stub без установленного SUMO; реальный движок
+  остаётся opt-in smoke.
+- Desktop app выбирает backend из окружения: `ROADSIM_SUMO_WORKER` +
+  `ROADSIM_NETCONVERT` (+ опц. `ROADSIM_SUMO_BRIDGE`, `ROADSIM_RUN_ROOT`)
+  включают SUMO worker с pinned engine identity `1.27.1`; без переменных
+  остаётся детерминированный fake. Отсутствие netconvert при заданном worker —
+  ошибка конфигурации, а не тихий откат на fake. Активный backend показан в UI.
+- Demo-проект расширен до перекрёстка: два corridors, junction и authored car
+  demand profile; редактор компилирует demand вместе с сетью, а удаление
+  corridor, на который ссылается junction, отклоняется доменной диагностикой.
+
 ### Changed
 
+- Backend API contract повышен с v1 до v2: `AgentState::lane_id` стал
+  `Option<CompiledLaneId>` (SUMO worker пока не сообщает полосу — `None` значит
+  «не сообщено», а не «вне сети»; snapshot использует явный sentinel
+  `LANE_UNKNOWN`), а `CompileOptions` получил scenario demand — спрос является
+  входом компиляции сценария, а не статической конфигурацией backend.
 - SUMO plain-network export contract повышен с v2 до v3: bundle содержит
   четвёртый документ `roadsim.tll.xml`, `SUMO_NETCONVERT_INPUT_ARGUMENTS`
   включает `--tllogic-files`, а общий код

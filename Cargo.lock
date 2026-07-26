@@ -1586,11 +1586,14 @@ dependencies = [
  "roadsim-application",
  "roadsim-backend-api",
  "roadsim-backend-fake",
+ "roadsim-backend-sumo",
+ "roadsim-backend-sumo-client",
  "roadsim-commands",
  "roadsim-compiled-network",
  "roadsim-compiler",
  "roadsim-domain",
  "roadsim-types",
+ "roadsim-worker-protocol",
  "winit",
 ]
 
@@ -1635,6 +1638,20 @@ version = "0.1.0"
 dependencies = [
  "roadsim-compiled-network",
  "roadsim-types",
+]
+
+[[package]]
+name = "roadsim-backend-sumo-client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "pollster",
+ "roadsim-backend-api",
+ "roadsim-backend-sumo",
+ "roadsim-compiled-network",
+ "roadsim-types",
+ "roadsim-worker-client",
+ "roadsim-worker-protocol",
 ]
 
 [[package]]
@@ -1722,6 +1739,12 @@ dependencies = [
 name = "roadsim-worker-stub"
 version = "0.1.0"
 dependencies = [
+ "pollster",
+ "roadsim-backend-api",
+ "roadsim-backend-sumo",
+ "roadsim-backend-sumo-client",
+ "roadsim-compiled-network",
+ "roadsim-types",
  "roadsim-worker-client",
  "roadsim-worker-protocol",
 ]

@@ -5,9 +5,13 @@ use roadsim_backend_api::{
     SimulationSession,
 };
 use roadsim_backend_fake::FakeBackend;
-use roadsim_compiled_network::CompiledNetwork;
+use roadsim_backend_sumo::{SumoRoadExportOptions, SumoVehicleTypeOptions};
+use roadsim_backend_sumo_client::{NetworkMaterialization, SumoRunnerBackend, SumoRunnerConfig};
+use roadsim_compiled_network::{CompiledDemandTable, CompiledNetwork};
 use roadsim_types::{RootSeed, Sha256Digest, SimulationTick};
-use std::{error::Error, fmt, sync::Arc};
+use roadsim_worker_protocol::{AuthToken, EngineIdentity};
+use std::hash::{BuildHasher, Hasher};
+use std::{error::Error, fmt, path::PathBuf, sync::Arc};
 
 const DEMO_AGENT_COUNT: u32 = 18;
 const DEMO_DURATION_TICKS: u64 = 1_200;
@@ -69,8 +73,82 @@ pub struct SimulationObservation {
     pub agent_count: usize,
 }
 
+/// Which engine drives the run, chosen once at startup from the environment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackendChoice {
+    Fake,
+    Sumo,
+}
+
+impl BackendChoice {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fake => "roadsim.fake.v1 · deterministic",
+            Self::Sumo => "roadsim.sumo.v1 · worker",
+        }
+    }
+}
+
+/// Builds the SUMO backend when the environment opts into it.
+///
+/// `ROADSIM_SUMO_WORKER` and `ROADSIM_NETCONVERT` select the worker binary and
+/// the exact netconvert; `ROADSIM_SUMO_BRIDGE` adds the native bridge library.
+/// Missing netconvert with a configured worker is a configuration error, not a
+/// silent fallback to the fake backend.
+fn backend_from_environment() -> Result<(Box<dyn SimulationBackend>, BackendChoice), SimulationError>
+{
+    let Some(worker) = std::env::var_os("ROADSIM_SUMO_WORKER") else {
+        return Ok((Box::new(FakeBackend::new()), BackendChoice::Fake));
+    };
+    let Some(netconvert) = std::env::var_os("ROADSIM_NETCONVERT") else {
+        return Err(SimulationError("app.backend.netconvert_missing".to_owned()));
+    };
+    // Random one-run token: authentication material, not model behavior.
+    let entropy = std::collections::hash_map::RandomState::new();
+    let mut token = String::new();
+    while token.len() < 64 {
+        let mut hasher = entropy.build_hasher();
+        hasher.write_usize(token.len());
+        token.push_str(&format!("{:016x}", hasher.finish()));
+    }
+    token.truncate(64);
+    let run_root = std::env::var_os("ROADSIM_RUN_ROOT")
+        .map_or_else(|| std::env::temp_dir().join("roadsim-runs"), PathBuf::from);
+    std::fs::create_dir_all(&run_root)
+        .map_err(|error| SimulationError(format!("app.backend.run_root: {error}")))?;
+    let mut config = SumoRunnerConfig::new(
+        worker,
+        NetworkMaterialization::Netconvert(PathBuf::from(netconvert)),
+        run_root,
+        AuthToken::parse(token).map_err(|_| SimulationError("app.backend.token".to_owned()))?,
+        SumoRoadExportOptions::new(13.89).map_err(|error| SimulationError(error.to_string()))?,
+        SumoVehicleTypeOptions::new(4.5, 1.8, 13.89)
+            .map_err(|error| SimulationError(error.to_string()))?,
+    )
+    .with_engine(
+        EngineIdentity::new(
+            "eclipse.sumo",
+            "1.27.1",
+            "7717f2379d9e314a0c81c5cec748444de06a2a91",
+        )
+        .map_err(|error| SimulationError(error.to_string()))?,
+    );
+    if let Some(bridge) = std::env::var_os("ROADSIM_SUMO_BRIDGE") {
+        config = config
+            .with_worker_argument("--bridge")
+            .with_worker_argument(bridge);
+    }
+    Ok((
+        Box::new(SumoRunnerBackend::new(config)),
+        BackendChoice::Sumo,
+    ))
+}
+
 pub struct SimulationController {
-    backend: FakeBackend,
+    backend: Box<dyn SimulationBackend>,
+    backend_choice: BackendChoice,
+    demand: Option<Arc<CompiledDemandTable>>,
     artifact: BackendArtifact,
     network: Arc<CompiledNetwork>,
     session: Option<Box<dyn SimulationSession>>,
@@ -83,16 +161,26 @@ pub struct SimulationController {
 
 impl SimulationController {
     pub fn new(network: Arc<CompiledNetwork>, auto_start: bool) -> Result<Self, SimulationError> {
-        let backend = FakeBackend::new();
+        Self::with_demand(network, None, auto_start)
+    }
+
+    pub fn with_demand(
+        network: Arc<CompiledNetwork>,
+        demand: Option<Arc<CompiledDemandTable>>,
+        auto_start: bool,
+    ) -> Result<Self, SimulationError> {
+        let (backend, backend_choice) = backend_from_environment()?;
         let scenario = ScenarioSnapshot::new(DEMO_SCENARIO_HASH, DEMO_AGENT_COUNT)
             .map_err(|error| SimulationError(error.to_string()))?;
+        let mut options = CompileOptions::none();
+        if let Some(demand) = &demand {
+            options = options.with_demand(demand.clone());
+        }
         let artifact = pollster::block_on(async {
             backend
                 .handshake(roadsim_backend_api::ClientHello::current())
                 .await?;
-            backend
-                .compile(network.clone(), scenario, CompileOptions)
-                .await
+            backend.compile(network.clone(), scenario, options).await
         })
         .map_err(|error| SimulationError(error.to_string()))?;
         let mut orchestrator = RunOrchestrator::new();
@@ -102,6 +190,8 @@ impl SimulationController {
             .map_err(|error| SimulationError(error.code().as_str().to_owned()))?;
         let mut controller = Self {
             backend,
+            backend_choice,
+            demand,
             artifact,
             network,
             session: None,
@@ -131,6 +221,7 @@ impl SimulationController {
     pub fn replace_network(
         &mut self,
         network: Arc<CompiledNetwork>,
+        demand: Option<Arc<CompiledDemandTable>>,
     ) -> Result<(), SimulationError> {
         if matches!(
             self.state(),
@@ -140,12 +231,13 @@ impl SimulationController {
         }
         let scenario = ScenarioSnapshot::new(DEMO_SCENARIO_HASH, DEMO_AGENT_COUNT)
             .map_err(|error| SimulationError(error.to_string()))?;
-        let artifact = pollster::block_on(self.backend.compile(
-            network.clone(),
-            scenario,
-            CompileOptions,
-        ))
-        .map_err(|error| SimulationError(error.to_string()))?;
+        let mut options = CompileOptions::none();
+        if let Some(demand) = &demand {
+            options = options.with_demand(demand.clone());
+        }
+        let artifact = pollster::block_on(self.backend.compile(network.clone(), scenario, options))
+            .map_err(|error| SimulationError(error.to_string()))?;
+        self.demand = demand;
         let mut orchestrator = RunOrchestrator::new();
         orchestrator
             .request(RunRequest::Prepare)
@@ -172,6 +264,11 @@ impl SimulationController {
     #[must_use]
     pub const fn state(&self) -> UiSimulationState {
         ui_state_for(self.orchestrator.state())
+    }
+
+    #[must_use]
+    pub const fn backend_choice(&self) -> BackendChoice {
+        self.backend_choice
     }
 
     /// Whether the UI may offer this action; invalid actions stay disabled.
@@ -383,9 +480,9 @@ mod tests {
         let network = std::sync::Arc::new(crate::demo::compiled_network().unwrap());
         let mut controller = SimulationController::new(network.clone(), false).unwrap();
         controller.start();
-        assert!(controller.replace_network(network.clone()).is_err());
+        assert!(controller.replace_network(network.clone(), None).is_err());
         controller.stop();
-        controller.replace_network(network).unwrap();
+        controller.replace_network(network, None).unwrap();
         assert_eq!(controller.state(), UiSimulationState::Ready);
         controller.start();
         controller.advance();

@@ -425,7 +425,10 @@ fn draw_shell(
                 });
             ui.add_space(16.0);
             ui.label("Симуляция");
-            ui.small("roadsim.fake.v1 · seed 20260718");
+            ui.small(format!(
+                "{} · seed 20260718",
+                simulation.backend_choice().label()
+            ));
             ui.label(format!("Tick: {}", simulation.tick().get()));
             ui.horizontal(|ui| {
                 // Enablement comes from the orchestrator, so a button can
@@ -484,7 +487,7 @@ fn draw_shell(
     if editor.revision() != network_revision_before
         && editor.error_code().is_none()
         && simulation
-            .replace_network(editor.network().clone())
+            .replace_network(editor.network().clone(), Some(editor.demand().clone()))
             .is_err()
     {
         // The refusal is already surfaced through the simulation error code.
@@ -500,7 +503,7 @@ fn draw_shell(
             painter.text(
                 rect.left_top() + Vec2::new(16.0, 14.0),
                 egui::Align2::LEFT_TOP,
-                "CSN VIEWPORT · DETERMINISTIC FAKE BACKEND",
+                "CSN VIEWPORT",
                 egui::FontId::monospace(12.0),
                 Color32::from_gray(145),
             );

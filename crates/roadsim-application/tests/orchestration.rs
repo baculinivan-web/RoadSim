@@ -241,7 +241,7 @@ fn the_state_machine_drives_a_real_backend_session_to_completion() {
             .compile(
                 Arc::new(demo_network()),
                 ScenarioSnapshot::new(Sha256Digest::from_bytes([4; 32]), 2).unwrap(),
-                CompileOptions,
+                CompileOptions::none(),
             )
             .await
             .unwrap();

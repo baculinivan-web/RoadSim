@@ -8,7 +8,15 @@ fn footprint() -> AgentFootprint {
 }
 
 fn agent(id: u32, lane: u32, x_m: f64) -> AgentState {
-    AgentState::new(id, CompiledLaneId::new(lane), x_m, 2.0, 0.25, footprint()).unwrap()
+    AgentState::new(
+        id,
+        Some(CompiledLaneId::new(lane)),
+        x_m,
+        2.0,
+        0.25,
+        footprint(),
+    )
+    .unwrap()
 }
 
 fn frame(tick: u64, agents: Vec<AgentState>) -> FrameBatch {

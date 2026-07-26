@@ -16,6 +16,9 @@ roadsim-commands = { version = "0.1.0", path = "../roadsim-commands" }
 roadsim-application = { version = "0.1.0", path = "../roadsim-application" }
 roadsim-backend-api = { version = "0.1.0", path = "../roadsim-backend-api" }
 roadsim-backend-fake = { version = "0.1.0", path = "../roadsim-backend-fake" }
+roadsim-backend-sumo = { version = "0.1.0", path = "../roadsim-backend-sumo" }
+roadsim-backend-sumo-client = { version = "0.1.0", path = "../roadsim-backend-sumo-client" }
+roadsim-worker-protocol = { version = "0.1.0", path = "../roadsim-worker-protocol" }
 roadsim-compiled-network = { version = "0.1.0", path = "../roadsim-compiled-network" }
 roadsim-compiler = { version = "0.1.0", path = "../roadsim-compiler" }
 roadsim-domain = { version = "0.1.0", path = "../roadsim-domain" }

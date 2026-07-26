@@ -55,7 +55,7 @@ fn handshake_and_capability_preflight_are_explicit() {
         let backend = FakeBackend::new();
         let hello = backend.handshake(ClientHello::current()).await.unwrap();
         assert!(hello.deterministic());
-        assert_eq!(hello.api_version(), 1);
+        assert_eq!(hello.api_version(), 2);
         assert!(
             hello
                 .capabilities()
@@ -73,7 +73,7 @@ fn handshake_and_capability_preflight_are_explicit() {
             .compile(
                 network_with(CapabilityId::TransitBusLanes),
                 scenario(1),
-                CompileOptions,
+                CompileOptions::none(),
             )
             .await
             .unwrap_err();
@@ -93,7 +93,7 @@ fn session_pause_resume_idempotency_and_cancel_follow_lifecycle() {
             .compile(
                 network_with(CapabilityId::RoadVehiclesBasic),
                 scenario(3),
-                CompileOptions,
+                CompileOptions::none(),
             )
             .await
             .unwrap();
@@ -147,7 +147,7 @@ fn same_inputs_emit_identical_frames_and_complete_once() {
             .compile(
                 network_with(CapabilityId::RoadVehiclesBasic),
                 scenario(4),
-                CompileOptions,
+                CompileOptions::none(),
             )
             .await
             .unwrap();
@@ -193,7 +193,7 @@ proptest! {
                 .compile(
                     network_with(CapabilityId::RoadVehiclesBasic),
                     scenario(agent_count),
-                    CompileOptions,
+                    CompileOptions::none(),
                 )
                 .await
                 .unwrap();
