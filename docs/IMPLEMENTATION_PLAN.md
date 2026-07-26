@@ -544,8 +544,20 @@ Bundle сохраняет `CompiledLaneId → LaneOrigin → SUMO edge/lane` map
 явную скорость и блокирует неподдерживаемые lane uses с Design object evidence.
 Exact `netconvert 1.27.1` принимает export, после чего opt-in worker smoke
 выполняет пять tick на сгенерированной CSN-дороге. Junction topology, demand и
-routes намеренно остаются E10-T04/E10-T06; CSN с movements до T04 явно
-отклоняется кодом `backend.sumo.junction_movements.unsupported` с object refs.
+routes намеренно остаются E10-T06; junction topology добавлена E10-T04.
+
+Статус E10-T04: 🟢 `roadsim-backend-sumo` экспортирует compiled junction
+movements как полный explicit SUMO connection table: одно movement — ровно одна
+`<connection>`, узел с movements получает `type="priority"`, а
+`SUMO_NETCONVERT_INPUT_ARGUMENTS` отключает turnarounds и эвристические связи.
+`SumoConnectionMapping` сохраняет `CompiledMovementId → JunctionId → SUMO
+edge/lane`. Неполный набор movements, разорванные endpoints и один узел с двумя
+junction ID блокируются object-linked diagnostics. ADR-022 фиксирует, что
+приоритет не выдумывается backend: RoadSim не авторизует junction priority, а
+right-of-way между уже зафиксированными связями считает pinned `netconvert
+1.27.1`. Pedestrian graph и traffic controls явно отклоняются кодами
+`backend.sumo.pedestrian_network.unsupported` и
+`backend.sumo.traffic_controls.unsupported` и остаются E10-T07/E10-T05.
 
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует

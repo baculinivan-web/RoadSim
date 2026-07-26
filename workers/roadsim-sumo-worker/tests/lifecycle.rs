@@ -1,5 +1,6 @@
 use roadsim_backend_sumo::{
-    SUMO_EDGES_FILE, SUMO_NODES_FILE, SumoRoadExportOptions, export_straight_network,
+    SUMO_CONNECTIONS_FILE, SUMO_EDGES_FILE, SUMO_NETCONVERT_INPUT_ARGUMENTS, SUMO_NODES_FILE,
+    SumoRoadExportOptions, export_network,
 };
 use roadsim_compiled_network::{
     CapabilityId, CapabilityRequirements, CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader,
@@ -249,8 +250,7 @@ fn real_libsumo_runs_exported_straight_csn() {
     let manager = RunDirectoryManager::new(&root, RunDirectoryLimits::new(1, 8).unwrap()).unwrap();
     let mut run = manager.create_run(92, 1).unwrap();
     let network = one_lane_network();
-    let bundle =
-        export_straight_network(&network, SumoRoadExportOptions::new(13.89).unwrap()).unwrap();
+    let bundle = export_network(&network, SumoRoadExportOptions::new(13.89).unwrap()).unwrap();
     assert_eq!(
         bundle.lane_mappings()[0].origin(),
         network
@@ -260,22 +260,19 @@ fn real_libsumo_runs_exported_straight_csn() {
     std::fs::write(run.path().join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
     std::fs::write(run.path().join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
     std::fs::write(
+        run.path().join(SUMO_CONNECTIONS_FILE),
+        bundle.connections_xml(),
+    )
+    .unwrap();
+    std::fs::write(
         run.path().join("roadsim.sumocfg"),
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n    <input><net-file value=\"roadsim.net.xml\"/></input>\n    <time><begin value=\"0\"/><end value=\"1\"/></time>\n</configuration>\n",
     )
     .unwrap();
     let output = Command::new(netconvert)
         .current_dir(run.path())
-        .args([
-            "--node-files",
-            SUMO_NODES_FILE,
-            "--edge-files",
-            SUMO_EDGES_FILE,
-            "--output-file",
-            "roadsim.net.xml",
-            "--no-turnarounds",
-            "true",
-        ])
+        .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
+        .args(["--output-file", "roadsim.net.xml"])
         .output()
         .unwrap();
     assert!(

@@ -124,8 +124,29 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   Compiler блокирует unbound/unresolved/duplicate movement ownership и
   одновременно зелёные геометрически конфликтующие movements до backend.
 
+- SUMO export теперь переводит compiled junction movements в полный explicit
+  connection table: одно movement — ровно одна `<connection>`, узел с movements
+  получает `type="priority"`, а `SUMO_NETCONVERT_INPUT_ARGUMENTS` отключает
+  turnarounds и эвристические связи netconvert. `SumoConnectionMapping`
+  сохраняет `CompiledMovementId → JunctionId → SUMO edge/lane`. Неполный набор
+  movements, разорванные endpoints и один узел с двумя junction ID блокируются
+  object-linked diagnostics; pedestrian graph и traffic controls отклоняются
+  явными кодами вместо молчаливого удаления. ADR-022 фиксирует, что RoadSim не
+  выдумывает junction priority, а right-of-way между зафиксированными связями
+  считает pinned `netconvert 1.27.1`.
+
 ### Changed
 
+- SUMO plain-network export contract повышен с v1 до v2: bundle содержит третий
+  документ `roadsim.con.xml`, `export_straight_network` заменён на
+  `export_network`, а код `backend.sumo.junction_movements.unsupported` удалён в
+  пользу `backend.sumo.junction_movements.incomplete`,
+  `backend.sumo.movement.endpoints_disconnected`,
+  `backend.sumo.junction_node.ambiguous`,
+  `backend.sumo.pedestrian_network.unsupported` и
+  `backend.sumo.traffic_controls.unsupported`. Persisted export artifacts ещё не
+  публиковались, поэтому runtime migration не вводится; callers обязаны
+  передавать `SUMO_NETCONVERT_INPUT_ARGUMENTS`.
 - In-memory CSN schema повышена с v1 до v2: semantic content hash теперь включает
   lane/pedestrian adjacency и их source maps. V1 runtime migration не вводится,
   поскольку persisted CSN artifacts ещё не публиковались.
