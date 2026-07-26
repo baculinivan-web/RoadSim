@@ -625,6 +625,22 @@ person/signal/queue batches, benchmark и Arrow/shared-memory решение о�
 
 **M4 exit:** на эталонном регулируемом перекрестке движутся автомобили и пешеходы, сигналы отображаются собственным renderer, UI pause/cancel работает, worker crash не теряет проект.
 
+Статус E11-T01: 🟢 добавлен отдельный `roadsim-application` с backend-agnostic
+`RunOrchestrator`: `Idle → Prepared → Running ⇄ Paused → Completed/Cancelled/
+Failed`, restart через `Reset` возвращает к тому же prepared artifact. Каждый
+принятый запрос возвращает ровно один `RunIntent`, который выполняет caller, —
+state machine не делает I/O и тестируется без движка и GPU. Cancel только
+запрашивается: run завершает backend, поэтому медленный cancel не выглядит
+завершённым. Все три terminal outcome, повторный запуск, незапрошенное
+изменение состояния движком и каждый invalid transition покрыты тестами;
+отказ — стабильный код, а не panic, и не меняет состояние.
+
+Статус E11-T02: 🟡 desktop shell берёт enablement кнопок Start/Pause/Resume/
+Stop из `RunOrchestrator::accepts`, поэтому UI не может предложить переход,
+который run отклонит, а отказ показывается стабильным кодом
+`application.run.invalid_transition`. Полноценная compile/progress-панель и
+diagnostics остаются в T02/E06-T09.
+
 ## 20. Epic E12 — Спрос, автобусы, трамвай и сценарии
 
 **Цель:** покрыть мультимодальные сценарии MVP и честно ограничить неподдерживаемые.

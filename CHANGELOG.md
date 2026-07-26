@@ -159,6 +159,13 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   для `walk` нельзя построить без геометрической догадки. Экспорт продолжает
   явно отклонять пешеходную сеть и pedestrian demand.
 
+- Добавлен `roadsim-application` с backend-agnostic `RunOrchestrator`: полный
+  lifecycle одного run, единственный terminal outcome, перезапуск из terminal
+  состояния и стабильные диагностики вместо panic на невозможном переходе.
+  State machine не выполняет I/O и возвращает caller ровно один `RunIntent`.
+- Desktop shell берёт enablement кнопок симуляции из оркестратора, поэтому UI
+  не предлагает переход, который run отклонит.
+
 ### Changed
 
 - SUMO plain-network export contract повышен с v2 до v3: bundle содержит

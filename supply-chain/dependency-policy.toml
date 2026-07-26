@@ -71,6 +71,22 @@ to = [
 rationale = "ARCHITECTURE §4/§8: compiler transforms an immutable Design snapshot into backend-independent CSN without UI or backend implementation dependencies"
 
 [[rules]]
+id = "application-is-ui-and-backend-implementation-independent"
+from = ["roadsim-application"]
+to = [
+    "egui",
+    "libsumo",
+    "roadsim-app",
+    "roadsim-backend-sumo",
+    "roadsim-editor-ui",
+    "roadsim-renderer",
+    "sumo-worker",
+    "wgpu",
+    "winit",
+]
+rationale = "ARCHITECTURE §4: run orchestration is an application service over the backend contract and must not depend on the desktop UI, GPU, or a production backend implementation; the in-memory test double of ARCHITECTURE §10 stays allowed because this guard does not distinguish dev-dependencies"
+
+[[rules]]
 id = "backend-api-is-ui-independent"
 from = ["roadsim-backend-api"]
 to = [
