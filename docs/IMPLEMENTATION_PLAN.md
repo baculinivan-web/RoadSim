@@ -559,6 +559,21 @@ right-of-way между уже зафиксированными связями �
 `backend.sumo.pedestrian_network.unsupported` и
 `backend.sumo.traffic_controls.unsupported` и остаются E10-T07/E10-T05.
 
+Статус E10-T05: 🟢 активная fixed-time программа контроллера экспортируется как
+один `<tlLogic type="static">` в `roadsim.tll.xml`: узел получает
+`type="traffic_light"`, связи — `tl`/`linkIndex` в compact movement order, а
+`SumoSignalMapping` сохраняет `SignalControllerId → SignalProgramId → link
+index → CompiledMovementId`. Authored порядок фаз, длительности и per-group
+indication сохраняются один к одному; `Green` экспортируется как major `G`,
+потому что compiler уже блокирует одновременно зелёные конфликтующие movements.
+Movement сигнализированного узла без группы отклоняется
+(`backend.sumo.signal_movement.unbound`), контроллер неизвестного узла —
+`backend.sumo.signal_junction.unknown`. Authored `intergreen > 0` намеренно не
+экспортируется: распределение clearance между amber и all-red требует
+подтверждённой трактовки domain owner (ADR-022, п. 10) и блокируется кодом
+`backend.sumo.signal_intergreen.unsupported`. Stop positions остаются
+неподдержанными отдельным кодом.
+
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует
 отсортированный protocol-v3 SoA frame через отдельный latest-wins writer, не

@@ -1,15 +1,16 @@
 use roadsim_backend_sumo::{
     SUMO_CONNECTIONS_FILE, SUMO_EDGES_FILE, SUMO_NETCONVERT_INPUT_ARGUMENTS,
-    SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SumoAgentId, SumoExportErrorCode,
+    SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SUMO_TLS_FILE, SumoAgentId, SumoExportErrorCode,
     SumoRoadExportOptions, export_network,
 };
 use roadsim_compiled_network::{
     CapabilityId, CapabilityRequirements, CompiledControlTable, CompiledLaneId, CompiledLaneUse,
     CompiledMovement, CompiledMovementCurve, CompiledMovementId, CompiledNetwork,
     CompiledNetworkHeader, CompiledPoint, CompiledSignalController, CompiledSignalGroup,
-    CompiledSignalIndication, CompiledSignalPhase, CompiledSignalProgram, CompiledSignalState,
-    CompiledStopPosition, CompiledTopology, LaneAdjacency, LaneGraph, LaneOrigin, LaneTable,
-    MovementGeometryTable, MovementTable, PedestrianGraph, PedestrianNodeOrigin, SourceRevision,
+    CompiledSignalGroupId, CompiledSignalIndication, CompiledSignalPhase, CompiledSignalProgram,
+    CompiledSignalState, CompiledStopPosition, CompiledTopology, LaneAdjacency, LaneGraph,
+    LaneOrigin, LaneTable, MovementGeometryTable, MovementTable, PedestrianGraph,
+    PedestrianNodeOrigin, SourceRevision,
 };
 use roadsim_types::{
     CorridorId, JunctionId, LaneId, Sha256Digest, SignalControllerId, SignalGroupId, SignalPhaseId,
@@ -186,30 +187,58 @@ fn empty_controls(movement_count: u32) -> CompiledControlTable {
     CompiledControlTable::new(8, movement_count, vec![], vec![], vec![], vec![]).unwrap()
 }
 
-fn signalized_controls() -> CompiledControlTable {
+/// Movements of the north-south approaches, i.e. compact IDs 0..3 and 6..9.
+const NORTH_SOUTH_MOVEMENTS: [u32; 6] = [0, 1, 2, 6, 7, 8];
+/// Movements of the east-west approaches.
+const EAST_WEST_MOVEMENTS: [u32; 6] = [3, 4, 5, 9, 10, 11];
+
+fn group(id: u128, movements: &[u32]) -> CompiledSignalGroup {
+    CompiledSignalGroup::new(
+        SignalGroupId::from_u128(id),
+        JunctionId::from_u128(JUNCTION),
+        movements
+            .iter()
+            .copied()
+            .map(CompiledMovementId::new)
+            .collect(),
+    )
+}
+
+fn phase(id: u128, intergreen_s: f64, first: CompiledSignalIndication) -> CompiledSignalPhase {
+    let second = match first {
+        CompiledSignalIndication::Green => CompiledSignalIndication::Red,
+        _ => CompiledSignalIndication::Green,
+    };
+    CompiledSignalPhase::new(
+        SignalPhaseId::from_u128(id),
+        30.0,
+        intergreen_s,
+        vec![
+            CompiledSignalState::new(CompiledSignalGroupId::new(0), first),
+            CompiledSignalState::new(CompiledSignalGroupId::new(1), second),
+        ],
+    )
+}
+
+/// Two-phase fixed-time program covering every movement of the fixture.
+fn signalized_controls(
+    intergreen_s: f64,
+    groups: Vec<CompiledSignalGroup>,
+) -> CompiledControlTable {
     let junction_id = JunctionId::from_u128(JUNCTION);
     let program_id = SignalProgramId::from_u128(40);
     CompiledControlTable::new(
         8,
         TURNS.len() as u32,
         vec![],
-        vec![CompiledSignalGroup::new(
-            SignalGroupId::from_u128(41),
-            junction_id,
-            vec![CompiledMovementId::new(0)],
-        )],
+        groups,
         vec![CompiledSignalProgram::new(
             program_id,
             junction_id,
-            vec![CompiledSignalPhase::new(
-                SignalPhaseId::from_u128(42),
-                30.0,
-                3.0,
-                vec![CompiledSignalState::new(
-                    roadsim_compiled_network::CompiledSignalGroupId::new(0),
-                    CompiledSignalIndication::Green,
-                )],
-            )],
+            vec![
+                phase(44, intergreen_s, CompiledSignalIndication::Green),
+                phase(45, intergreen_s, CompiledSignalIndication::Red),
+            ],
         )],
         vec![CompiledSignalController::new(
             SignalControllerId::from_u128(43),
@@ -218,6 +247,13 @@ fn signalized_controls() -> CompiledControlTable {
         )],
     )
     .unwrap()
+}
+
+fn full_signal_groups() -> Vec<CompiledSignalGroup> {
+    vec![
+        group(41, &NORTH_SOUTH_MOVEMENTS),
+        group(42, &EAST_WEST_MOVEMENTS),
+    ]
 }
 
 #[test]
@@ -389,28 +425,112 @@ fn unsupported_lane_use_fails_with_design_object_evidence() {
 }
 
 #[test]
-fn signal_controls_fail_before_t05_instead_of_unsignalized_downgrade() {
-    let network = four_arm_network(signalized_controls());
-    let error = export_network(&network, options()).unwrap_err();
+fn fixed_time_program_exports_a_deterministic_signal_state_timeline() {
+    let network = four_arm_network(signalized_controls(0.0, full_signal_groups()));
+    let first = export_network(&network, options()).unwrap();
+    let second = export_network(&network, options()).unwrap();
 
+    assert_eq!(first, second);
+    assert!(
+        first
+            .nodes_xml()
+            .contains("type=\"traffic_light\" tl=\"rs_tls_0\"")
+    );
+    assert_eq!(first.signal_mappings().len(), 1);
+    let mapping = &first.signal_mappings()[0];
+    assert_eq!(mapping.tls_id().as_str(), "rs_tls_0");
+    assert_eq!(mapping.junction_id(), JunctionId::from_u128(JUNCTION));
     assert_eq!(
-        error.code(),
-        SumoExportErrorCode::UnsupportedTrafficControls
+        mapping.signal_controller_id(),
+        SignalControllerId::from_u128(43)
+    );
+    assert_eq!(mapping.signal_program_id(), SignalProgramId::from_u128(40));
+    assert_eq!(mapping.link_movement_ids().len(), TURNS.len());
+
+    // Link index follows the compact movement order of the junction.
+    for (link_index, movement_id) in mapping.link_movement_ids().iter().enumerate() {
+        assert_eq!(movement_id.get(), link_index as u32);
+        let connection = &first.connection_mappings()[link_index];
+        let (tls_id, exported_index) = connection.tls_link().unwrap();
+        assert_eq!(tls_id.as_str(), "rs_tls_0");
+        assert_eq!(exported_index, link_index as u16);
+        assert!(
+            first
+                .connections_xml()
+                .contains(&format!("tl=\"rs_tls_0\" linkIndex=\"{link_index}\""))
+        );
+    }
+
+    // Both authored phases keep their order, duration and per-group state.
+    assert!(
+        first
+            .tls_xml()
+            .contains("<phase duration=\"30\" state=\"GGGrrrGGGrrr\"/>")
     );
     assert!(
-        error
-            .object_refs()
-            .contains(&SignalGroupId::from_u128(41).into())
+        first
+            .tls_xml()
+            .contains("<phase duration=\"30\" state=\"rrrGGGrrrGGG\"/>")
     );
+    assert_eq!(first.tls_xml().matches("<phase ").count(), 2);
+}
+
+#[test]
+fn unsignalized_junction_exports_no_traffic_light() {
+    let bundle = export_network(
+        &four_arm_network(empty_controls(TURNS.len() as u32)),
+        options(),
+    )
+    .unwrap();
+
+    assert!(bundle.signal_mappings().is_empty());
+    assert!(!bundle.nodes_xml().contains("traffic_light"));
+    assert!(!bundle.connections_xml().contains("linkIndex"));
+    assert_eq!(bundle.tls_xml().matches("<tlLogic ").count(), 0);
     assert!(
-        error
-            .object_refs()
-            .contains(&SignalControllerId::from_u128(43).into())
+        bundle
+            .connection_mappings()
+            .iter()
+            .all(|mapping| mapping.tls_link().is_none())
     );
 }
 
 #[test]
-fn stop_positions_fail_before_t05_instead_of_being_dropped() {
+fn authored_intergreen_is_rejected_instead_of_being_interpreted() {
+    let network = four_arm_network(signalized_controls(3.0, full_signal_groups()));
+    let error = export_network(&network, options()).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        SumoExportErrorCode::UnsupportedSignalIntergreen
+    );
+    assert!(
+        error
+            .object_refs()
+            .contains(&SignalProgramId::from_u128(40).into())
+    );
+}
+
+#[test]
+fn movement_without_a_signal_group_blocks_the_signalized_export() {
+    let mut partial = NORTH_SOUTH_MOVEMENTS.to_vec();
+    partial.pop();
+    let network = four_arm_network(signalized_controls(
+        0.0,
+        vec![group(41, &partial), group(42, &EAST_WEST_MOVEMENTS)],
+    ));
+
+    let error = export_network(&network, options()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::SignalMovementUnbound);
+    assert!(
+        error
+            .object_refs()
+            .contains(&JunctionId::from_u128(JUNCTION).into())
+    );
+}
+
+#[test]
+fn stop_positions_fail_instead_of_being_dropped() {
     let controls = CompiledControlTable::new(
         8,
         TURNS.len() as u32,
@@ -426,10 +546,7 @@ fn stop_positions_fail_before_t05_instead_of_being_dropped() {
     .unwrap();
     let error = export_network(&four_arm_network(controls), options()).unwrap_err();
 
-    assert_eq!(
-        error.code(),
-        SumoExportErrorCode::UnsupportedTrafficControls
-    );
+    assert_eq!(error.code(), SumoExportErrorCode::UnsupportedStopPositions);
     assert!(
         error
             .object_refs()
@@ -506,6 +623,7 @@ fn exact_netconvert_accepts_exported_four_arm_junction() {
     std::fs::write(root.join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
     std::fs::write(root.join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
     std::fs::write(root.join(SUMO_CONNECTIONS_FILE), bundle.connections_xml()).unwrap();
+    std::fs::write(root.join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
     let output = Command::new(netconvert)
         .current_dir(&root)
         .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
@@ -526,5 +644,49 @@ fn exact_netconvert_accepts_exported_four_arm_junction() {
     // netconvert must resolve right-of-way for the exported turn paths, so at
     // least one movement yields instead of every approach being major.
     assert!(compiled_xml.contains("<request "));
+    assert!(!compiled_xml.contains("<tlLogic "));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "requires ROADSIM_NETCONVERT for exact SUMO 1.27.1"]
+fn exact_netconvert_accepts_the_exported_fixed_time_program() {
+    let netconvert = PathBuf::from(
+        std::env::var_os("ROADSIM_NETCONVERT").expect("ROADSIM_NETCONVERT is required"),
+    );
+    assert!(
+        netconvert.is_absolute(),
+        "ROADSIM_NETCONVERT must be absolute"
+    );
+    let root = std::env::temp_dir().join(format!("roadsim-sumo-tls-smoke-{}", std::process::id()));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    std::fs::create_dir(&root).unwrap();
+    let bundle = export_network(
+        &four_arm_network(signalized_controls(0.0, full_signal_groups())),
+        options(),
+    )
+    .unwrap();
+    std::fs::write(root.join(SUMO_NODES_FILE), bundle.nodes_xml()).unwrap();
+    std::fs::write(root.join(SUMO_EDGES_FILE), bundle.edges_xml()).unwrap();
+    std::fs::write(root.join(SUMO_CONNECTIONS_FILE), bundle.connections_xml()).unwrap();
+    std::fs::write(root.join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
+    let output = Command::new(netconvert)
+        .current_dir(&root)
+        .args(SUMO_NETCONVERT_INPUT_ARGUMENTS)
+        .args(["--output-file", "roadsim.net.xml"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "netconvert failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let compiled_xml = std::fs::read_to_string(root.join("roadsim.net.xml")).unwrap();
+    assert!(compiled_xml.contains("<tlLogic id=\"rs_tls_0\""));
+    assert!(compiled_xml.contains("state=\"GGGrrrGGGrrr\""));
+    assert!(compiled_xml.contains("state=\"rrrGGGrrrGGG\""));
+    assert!(compiled_xml.contains("type=\"traffic_light\""));
     std::fs::remove_dir_all(root).unwrap();
 }

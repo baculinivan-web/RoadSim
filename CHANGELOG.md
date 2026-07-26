@@ -135,8 +135,25 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   выдумывает junction priority, а right-of-way между зафиксированными связями
   считает pinned `netconvert 1.27.1`.
 
+- SUMO export переводит активную fixed-time программу каждого контроллера в
+  `roadsim.tll.xml`: `<tlLogic type="static">` с сохранённым порядком фаз,
+  длительностями и per-group indication, узел `type="traffic_light"`, связи с
+  `tl`/`linkIndex` в compact movement order и `SumoSignalMapping` для обратного
+  отображения. Movement сигнализированного узла без группы, контроллер
+  неизвестного узла и authored `intergreen > 0` отклоняются стабильными кодами;
+  трактовка clearance между amber и all-red остаётся за domain owner.
+
 ### Changed
 
+- SUMO plain-network export contract повышен с v2 до v3: bundle содержит
+  четвёртый документ `roadsim.tll.xml`, `SUMO_NETCONVERT_INPUT_ARGUMENTS`
+  включает `--tllogic-files`, а общий код
+  `backend.sumo.traffic_controls.unsupported` заменён на
+  `backend.sumo.stop_positions.unsupported`,
+  `backend.sumo.signal_intergreen.unsupported`,
+  `backend.sumo.signal_movement.unbound` и
+  `backend.sumo.signal_junction.unknown`. Persisted export artifacts не
+  публиковались, runtime migration не вводится.
 - SUMO plain-network export contract повышен с v1 до v2: bundle содержит третий
   документ `roadsim.con.xml`, `export_straight_network` заменён на
   `export_network`, а код `backend.sumo.junction_movements.unsupported` удалён в

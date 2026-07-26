@@ -1,6 +1,6 @@
 use roadsim_backend_sumo::{
     SUMO_CONNECTIONS_FILE, SUMO_EDGES_FILE, SUMO_NETCONVERT_INPUT_ARGUMENTS, SUMO_NODES_FILE,
-    SumoRoadExportOptions, export_network,
+    SUMO_TLS_FILE, SumoRoadExportOptions, export_network,
 };
 use roadsim_compiled_network::{
     CapabilityId, CapabilityRequirements, CompiledLaneUse, CompiledNetwork, CompiledNetworkHeader,
@@ -264,6 +264,7 @@ fn real_libsumo_runs_exported_straight_csn() {
         bundle.connections_xml(),
     )
     .unwrap();
+    std::fs::write(run.path().join(SUMO_TLS_FILE), bundle.tls_xml()).unwrap();
     std::fs::write(
         run.path().join("roadsim.sumocfg"),
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n    <input><net-file value=\"roadsim.net.xml\"/></input>\n    <time><begin value=\"0\"/><end value=\"1\"/></time>\n</configuration>\n",

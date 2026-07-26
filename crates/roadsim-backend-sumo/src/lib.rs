@@ -5,9 +5,10 @@
 //! where the returned bundle is materialized.
 
 use roadsim_compiled_network::{
-    CompiledLaneId, CompiledLaneUse, CompiledMovementId, CompiledNetwork, CompiledPoint, LaneOrigin,
+    CompiledLaneId, CompiledLaneUse, CompiledMovementId, CompiledNetwork, CompiledPoint,
+    CompiledSignalIndication, LaneOrigin,
 };
-use roadsim_types::{JunctionId, ObjectRef};
+use roadsim_types::{JunctionId, ObjectRef, SignalControllerId, SignalProgramId};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -16,13 +17,15 @@ use std::{
 };
 
 /// Version of the typed SUMO plain-network export contract.
-pub const SUMO_NETWORK_EXPORT_VERSION: u32 = 2;
+pub const SUMO_NETWORK_EXPORT_VERSION: u32 = 3;
 /// Conventional filename for the generated SUMO plain nodes document.
 pub const SUMO_NODES_FILE: &str = "roadsim.nod.xml";
 /// Conventional filename for the generated SUMO plain edges document.
 pub const SUMO_EDGES_FILE: &str = "roadsim.edg.xml";
 /// Conventional filename for the generated SUMO plain connections document.
 pub const SUMO_CONNECTIONS_FILE: &str = "roadsim.con.xml";
+/// Conventional filename for the generated SUMO traffic light logic document.
+pub const SUMO_TLS_FILE: &str = "roadsim.tll.xml";
 /// Stable namespace used to recover RoadSim compact agent IDs in the worker.
 pub const SUMO_AGENT_ID_PREFIX: &str = "rs_agent_";
 
@@ -38,6 +41,8 @@ pub const SUMO_NETCONVERT_INPUT_ARGUMENTS: &[&str] = &[
     SUMO_EDGES_FILE,
     "--connection-files",
     SUMO_CONNECTIONS_FILE,
+    "--tllogic-files",
+    SUMO_TLS_FILE,
     "--no-turnarounds",
     "true",
 ];
@@ -91,10 +96,13 @@ pub enum SumoExportErrorCode {
     InvalidSpeed,
     UnsupportedLaneUse,
     UnsupportedPedestrianNetwork,
-    UnsupportedTrafficControls,
+    UnsupportedStopPositions,
+    UnsupportedSignalIntergreen,
     MovementEndpointsDisconnected,
     JunctionMovementsIncomplete,
     JunctionNodeAmbiguous,
+    SignalMovementUnbound,
+    SignalJunctionUnknown,
 }
 
 impl SumoExportErrorCode {
@@ -106,10 +114,13 @@ impl SumoExportErrorCode {
             Self::InvalidSpeed => "backend.sumo.road.speed_invalid",
             Self::UnsupportedLaneUse => "backend.sumo.lane_use.unsupported",
             Self::UnsupportedPedestrianNetwork => "backend.sumo.pedestrian_network.unsupported",
-            Self::UnsupportedTrafficControls => "backend.sumo.traffic_controls.unsupported",
+            Self::UnsupportedStopPositions => "backend.sumo.stop_positions.unsupported",
+            Self::UnsupportedSignalIntergreen => "backend.sumo.signal_intergreen.unsupported",
             Self::MovementEndpointsDisconnected => "backend.sumo.movement.endpoints_disconnected",
             Self::JunctionMovementsIncomplete => "backend.sumo.junction_movements.incomplete",
             Self::JunctionNodeAmbiguous => "backend.sumo.junction_node.ambiguous",
+            Self::SignalMovementUnbound => "backend.sumo.signal_movement.unbound",
+            Self::SignalJunctionUnknown => "backend.sumo.signal_junction.unknown",
         }
     }
 }
@@ -210,6 +221,7 @@ pub struct SumoConnectionMapping {
     from_lane_index: u16,
     to_edge_id: SumoEdgeId,
     to_lane_index: u16,
+    tls_link: Option<(SumoTlsId, u16)>,
 }
 
 impl SumoConnectionMapping {
@@ -247,6 +259,63 @@ impl SumoConnectionMapping {
     pub const fn to_lane_index(&self) -> u16 {
         self.to_lane_index
     }
+
+    /// Generated TLS and `linkIndex` when this movement is signal controlled.
+    #[must_use]
+    pub fn tls_link(&self) -> Option<(&SumoTlsId, u16)> {
+        self.tls_link
+            .as_ref()
+            .map(|(tls_id, index)| (tls_id, *index))
+    }
+}
+
+/// Generated SUMO traffic light identifier, scoped to one export bundle.
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SumoTlsId(String);
+
+impl SumoTlsId {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Lossless mapping from one compiled fixed-time controller to one SUMO TLS.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SumoSignalMapping {
+    signal_controller_id: SignalControllerId,
+    signal_program_id: SignalProgramId,
+    junction_id: JunctionId,
+    tls_id: SumoTlsId,
+    /// Compact movement per SUMO link index, in exported `linkIndex` order.
+    link_movement_ids: Vec<CompiledMovementId>,
+}
+
+impl SumoSignalMapping {
+    #[must_use]
+    pub const fn signal_controller_id(&self) -> SignalControllerId {
+        self.signal_controller_id
+    }
+
+    #[must_use]
+    pub const fn signal_program_id(&self) -> SignalProgramId {
+        self.signal_program_id
+    }
+
+    #[must_use]
+    pub const fn junction_id(&self) -> JunctionId {
+        self.junction_id
+    }
+
+    #[must_use]
+    pub const fn tls_id(&self) -> &SumoTlsId {
+        &self.tls_id
+    }
+
+    #[must_use]
+    pub fn link_movement_ids(&self) -> &[CompiledMovementId] {
+        &self.link_movement_ids
+    }
 }
 
 /// Complete in-memory plain-network bundle ready for bounded materialization.
@@ -256,8 +325,10 @@ pub struct SumoNetworkBundle {
     nodes_xml: String,
     edges_xml: String,
     connections_xml: String,
+    tls_xml: String,
     lane_mappings: Vec<SumoLaneMapping>,
     connection_mappings: Vec<SumoConnectionMapping>,
+    signal_mappings: Vec<SumoSignalMapping>,
 }
 
 impl SumoNetworkBundle {
@@ -282,6 +353,11 @@ impl SumoNetworkBundle {
     }
 
     #[must_use]
+    pub fn tls_xml(&self) -> &str {
+        &self.tls_xml
+    }
+
+    #[must_use]
     pub fn lane_mappings(&self) -> &[SumoLaneMapping] {
         &self.lane_mappings
     }
@@ -289,6 +365,11 @@ impl SumoNetworkBundle {
     #[must_use]
     pub fn connection_mappings(&self) -> &[SumoConnectionMapping] {
         &self.connection_mappings
+    }
+
+    #[must_use]
+    pub fn signal_mappings(&self) -> &[SumoSignalMapping] {
+        &self.signal_mappings
     }
 }
 
@@ -346,7 +427,7 @@ pub fn export_network(
         ));
     }
     reject_unsupported_pedestrian_network(network)?;
-    reject_unsupported_controls(network)?;
+    reject_unsupported_stop_positions(network)?;
 
     let mut nodes = BTreeMap::<NodeKey, NodeRecord>::new();
     for lane in network.lanes().iter() {
@@ -424,8 +505,11 @@ pub fn export_network(
             from_lane_index: 0,
             to_edge_id: edge_ids[movement.to().get() as usize].clone(),
             to_lane_index: 0,
+            tls_link: None,
         });
     }
+
+    let signal_mappings = assign_signal_links(network, &nodes, &mut connection_mappings)?;
 
     // An exported connection table replaces netconvert's heuristics for the
     // whole junction, so a partially described junction would silently drop
@@ -471,7 +555,16 @@ pub fn export_network(
     for (key, record) in &nodes {
         let (x_m, y_m) = key.coordinates();
         let node_id = record.id.as_str();
-        if record.junction_id.is_some() {
+        if let Some(tls_id) = record
+            .junction_id
+            .and_then(|junction_id| tls_id_for_junction(&signal_mappings, junction_id))
+        {
+            writeln!(
+                nodes_xml,
+                "    <node id=\"{node_id}\" x=\"{x_m}\" y=\"{y_m}\" type=\"traffic_light\" tl=\"{}\"/>",
+                tls_id.as_str()
+            )
+        } else if record.junction_id.is_some() {
             writeln!(
                 nodes_xml,
                 "    <node id=\"{node_id}\" x=\"{x_m}\" y=\"{y_m}\" type=\"priority\"/>"
@@ -520,9 +613,15 @@ pub fn export_network(
     let mut connections_xml =
         String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<connections>\n");
     for mapping in &connection_mappings {
+        let tls_attributes = match mapping.tls_link.as_ref() {
+            Some((tls_id, link_index)) => {
+                format!(" tl=\"{}\" linkIndex=\"{link_index}\"", tls_id.as_str())
+            }
+            None => String::new(),
+        };
         writeln!(
             connections_xml,
-            "    <connection from=\"{}\" to=\"{}\" fromLane=\"{}\" toLane=\"{}\"/>",
+            "    <connection from=\"{}\" to=\"{}\" fromLane=\"{}\" toLane=\"{}\"{tls_attributes}/>",
             mapping.from_edge_id.as_str(),
             mapping.to_edge_id.as_str(),
             mapping.from_lane_index,
@@ -532,13 +631,17 @@ pub fn export_network(
     }
     connections_xml.push_str("</connections>\n");
 
+    let tls_xml = write_tls_document(network, &signal_mappings)?;
+
     Ok(SumoNetworkBundle {
         version: SUMO_NETWORK_EXPORT_VERSION,
         nodes_xml,
         edges_xml,
         connections_xml,
+        tls_xml,
         lane_mappings,
         connection_mappings,
+        signal_mappings,
     })
 }
 
@@ -552,26 +655,188 @@ fn reject_unsupported_pedestrian_network(network: &CompiledNetwork) -> Result<()
     ))
 }
 
-fn reject_unsupported_controls(network: &CompiledNetwork) -> Result<(), SumoExportError> {
-    let controls = network.controls();
-    let mut object_refs = Vec::new();
-    for stop_position in controls.stop_positions() {
-        object_refs.push(stop_position.stop_line_id().into());
-    }
-    for group in controls.signal_groups() {
-        object_refs.push(group.signal_group_id().into());
-        object_refs.push(group.junction_id().into());
-    }
-    for controller in controls.signal_controllers() {
-        object_refs.push(controller.signal_controller_id().into());
-    }
-    if object_refs.is_empty() && controls.signal_programs().is_empty() {
+/// Authored stop lines are markings; where a vehicle waits inside a SUMO
+/// junction is a separate mapping decision and is not part of this stage.
+fn reject_unsupported_stop_positions(network: &CompiledNetwork) -> Result<(), SumoExportError> {
+    let stop_positions = network.controls().stop_positions();
+    if stop_positions.is_empty() {
         return Ok(());
     }
     Err(SumoExportError::new(
-        SumoExportErrorCode::UnsupportedTrafficControls,
-        object_refs,
+        SumoExportErrorCode::UnsupportedStopPositions,
+        stop_positions
+            .iter()
+            .map(|position| position.stop_line_id().into())
+            .collect(),
     ))
+}
+
+fn tls_id_for_junction(
+    signal_mappings: &[SumoSignalMapping],
+    junction_id: JunctionId,
+) -> Option<&SumoTlsId> {
+    signal_mappings
+        .iter()
+        .find(|mapping| mapping.junction_id == junction_id)
+        .map(SumoSignalMapping::tls_id)
+}
+
+/// Assigns one deterministic SUMO `linkIndex` per signal-controlled movement.
+///
+/// Link order follows the compact movement order of the junction, so the state
+/// string of every exported phase is stable for one CSN.
+fn assign_signal_links(
+    network: &CompiledNetwork,
+    nodes: &BTreeMap<NodeKey, NodeRecord>,
+    connection_mappings: &mut [SumoConnectionMapping],
+) -> Result<Vec<SumoSignalMapping>, SumoExportError> {
+    let controls = network.controls();
+    if controls.signal_controllers().is_empty() {
+        // A group without a controller cannot reach this point: the CSN
+        // rejects uncontrolled signal groups before the backend sees them.
+        return Ok(Vec::new());
+    }
+    let exported_junctions: BTreeSet<JunctionId> = nodes
+        .values()
+        .filter_map(|record| record.junction_id)
+        .collect();
+
+    let mut signal_mappings = Vec::with_capacity(controls.signal_controllers().len());
+    for (index, controller) in controls.signal_controllers().iter().enumerate() {
+        if !exported_junctions.contains(&controller.junction_id()) {
+            return Err(SumoExportError::new(
+                SumoExportErrorCode::SignalJunctionUnknown,
+                vec![
+                    controller.signal_controller_id().into(),
+                    controller.junction_id().into(),
+                ],
+            ));
+        }
+        let tls_id = SumoTlsId(format!("rs_tls_{index}"));
+        let mut link_movement_ids = Vec::new();
+        for mapping in connection_mappings
+            .iter_mut()
+            .filter(|mapping| mapping.junction_id == controller.junction_id())
+        {
+            let link_index = u16::try_from(link_movement_ids.len()).map_err(|_| {
+                SumoExportError::new(
+                    SumoExportErrorCode::NetworkTooLarge,
+                    vec![controller.junction_id().into()],
+                )
+            })?;
+            mapping.tls_link = Some((tls_id.clone(), link_index));
+            link_movement_ids.push(mapping.movement_id);
+        }
+        // Every movement of a signalized junction must belong to a group,
+        // otherwise the exported state string would silently grant it green.
+        for movement_id in &link_movement_ids {
+            if !controls
+                .signal_groups()
+                .iter()
+                .any(|group| group.movement_ids().contains(movement_id))
+            {
+                let movement = network
+                    .movements()
+                    .movement(*movement_id)
+                    .expect("connection mappings only carry table movements");
+                return Err(SumoExportError::new(
+                    SumoExportErrorCode::SignalMovementUnbound,
+                    movement_object_refs(
+                        network,
+                        movement.junction_id(),
+                        movement.from(),
+                        movement.to(),
+                    ),
+                ));
+            }
+        }
+        signal_mappings.push(SumoSignalMapping {
+            signal_controller_id: controller.signal_controller_id(),
+            signal_program_id: controller.active_program_id(),
+            junction_id: controller.junction_id(),
+            tls_id,
+            link_movement_ids,
+        });
+    }
+    Ok(signal_mappings)
+}
+
+/// Serializes the active fixed-time program of every exported controller.
+fn write_tls_document(
+    network: &CompiledNetwork,
+    signal_mappings: &[SumoSignalMapping],
+) -> Result<String, SumoExportError> {
+    let mut tls_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<tlLogics>\n");
+    for mapping in signal_mappings {
+        let program = network
+            .controls()
+            .signal_programs()
+            .iter()
+            .find(|program| program.signal_program_id() == mapping.signal_program_id)
+            .expect("CompiledControlTable guarantees the active program exists");
+        writeln!(
+            tls_xml,
+            "    <tlLogic id=\"{}\" type=\"static\" programID=\"rs_program_0\" offset=\"0\">",
+            mapping.tls_id.as_str()
+        )
+        .expect("writing to String cannot fail");
+        for phase in program.phases() {
+            // Intergreen distributes clearance between amber and all-red, which
+            // is a normative interpretation this adapter must not invent.
+            if phase.intergreen_s() > 0.0 {
+                return Err(SumoExportError::new(
+                    SumoExportErrorCode::UnsupportedSignalIntergreen,
+                    vec![
+                        phase.signal_phase_id().into(),
+                        program.signal_program_id().into(),
+                    ],
+                ));
+            }
+            let mut state = String::with_capacity(mapping.link_movement_ids.len());
+            for movement_id in &mapping.link_movement_ids {
+                let group_index = network
+                    .controls()
+                    .signal_groups()
+                    .iter()
+                    .position(|group| group.movement_ids().contains(movement_id))
+                    .expect("unbound movements were rejected before serialization");
+                let indication = phase
+                    .states()
+                    .iter()
+                    .find(|signal_state| signal_state.group_id().get() as usize == group_index)
+                    .map(|signal_state| signal_state.indication())
+                    .ok_or_else(|| {
+                        SumoExportError::new(
+                            SumoExportErrorCode::SignalMovementUnbound,
+                            vec![phase.signal_phase_id().into(), mapping.junction_id.into()],
+                        )
+                    })?;
+                state.push(indication_character(indication));
+            }
+            writeln!(
+                tls_xml,
+                "        <phase duration=\"{}\" state=\"{state}\"/>",
+                phase.duration_s()
+            )
+            .expect("writing to String cannot fail");
+        }
+        tls_xml.push_str("    </tlLogic>\n");
+    }
+    tls_xml.push_str("</tlLogics>\n");
+    Ok(tls_xml)
+}
+
+/// Maps one compiled indication to its SUMO signal-state character.
+const fn indication_character(indication: CompiledSignalIndication) -> char {
+    match indication {
+        // Green is always major: the CSN rejects simultaneously green
+        // movements whose geometry conflicts, so no minor green is needed.
+        CompiledSignalIndication::Green => 'G',
+        CompiledSignalIndication::Amber => 'y',
+        CompiledSignalIndication::RedAmber => 'u',
+        CompiledSignalIndication::Red => 'r',
+        CompiledSignalIndication::Dark => 'O',
+    }
 }
 
 fn movement_object_refs(

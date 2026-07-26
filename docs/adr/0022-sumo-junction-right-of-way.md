@@ -1,11 +1,11 @@
-# ADR-022: Explicit SUMO connection table and delegated right-of-way
+# ADR-022: Explicit SUMO connection и TLS tables, delegated right-of-way
 
 - Статус: accepted
 - Дата: 2026-07-26
 - Владельцы: backend/SUMO maintainers
 - Reviewers: architecture, domain, determinism
 - Связанные требования: FR-040…FR-043, NFR-020, NFR-030
-- Связанные задачи: E10-T03, E10-T04, E10-T05, E07-T05, E07-T06
+- Связанные задачи: E10-T03, E10-T04, E10-T05, E07-T05, E07-T06, E07-T07
 
 ## Контекст
 
@@ -60,8 +60,31 @@ Conflict matrix — геометрический факт (пересечени�
    `backend.sumo.junction_movements.incomplete`, а не повод вернуться к
    эвристике. Turnaround исключён из проверки, потому что он отключён явно.
 6. Сущности, которые CSN уже выражает, а этот этап ещё не отображает —
-   pedestrian graph (E10-T07), stop positions и signal programs (E10-T05) —
-   отклоняются с Design object references, а не удаляются из экспорта.
+   pedestrian graph (E10-T07) и stop positions — отклоняются с Design object
+   references, а не удаляются из экспорта.
+
+## Решение для сигнального управления (E10-T05)
+
+7. Контроллер экспортируется как один `<tlLogic type="static">`; узел получает
+   `type="traffic_light" tl="rs_tls_<n>"`, а связи — `tl`/`linkIndex`.
+   `linkIndex` следует compact movement order узла, поэтому state string
+   детерминирована для одной CSN.
+8. Indication отображается один к одному: `Green → G`, `Amber → y`,
+   `RedAmber → u`, `Red → r`, `Dark → O`. Green всегда major (`G`), потому что
+   compiler уже блокирует одновременно зелёные геометрически конфликтующие
+   movements; minor green выдумывать не требуется.
+9. Movement сигнализированного узла, не принадлежащий ни одной группе,
+   отклоняется кодом `backend.sumo.signal_movement.unbound`: пропуск ссылки в
+   state string молча дал бы ему green.
+10. Authored `intergreen` пока не экспортируется. Распределение clearance между
+    amber и all-red — нормативная трактовка, которую adapter не имеет права
+    выдумывать, поэтому программа с `intergreen > 0` отклоняется кодом
+    `backend.sumo.signal_intergreen.unsupported` до появления подтверждённой
+    трактовки domain owner (E08/E12-T09). Программы с нулевым intergreen
+    экспортируются полностью.
+11. Stop positions остаются неподдержанными
+    (`backend.sumo.stop_positions.unsupported`): позиция ожидания внутри SUMO
+    junction — отдельное решение отображения, а не часть TLS export.
 
 ## Последствия
 
@@ -82,3 +105,6 @@ lane-to-lane выбор внутри одного corridor остаются за
   movements, разорванных endpoints, pedestrian graph и traffic controls.
 - Opt-in smoke на exact `netconvert 1.27.1` проверяет, что связи сохранены в
   `roadsim.net.xml` и что узел получил вычисленные `<request>` строки.
+- Отдельный opt-in smoke проверяет, что двухфазная fixed-time программа
+  доходит до `roadsim.net.xml` как `<tlLogic id="rs_tls_0">` с исходными
+  state strings.
