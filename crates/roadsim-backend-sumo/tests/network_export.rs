@@ -1,11 +1,13 @@
 use roadsim_backend_sumo::{
     SUMO_CONNECTIONS_FILE, SUMO_EDGES_FILE, SUMO_NETCONVERT_INPUT_ARGUMENTS,
-    SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SUMO_TLS_FILE, SumoAgentId, SumoExportErrorCode,
-    SumoRoadExportOptions, export_network,
+    SUMO_NETWORK_EXPORT_VERSION, SUMO_NODES_FILE, SUMO_ROUTES_EXPORT_VERSION, SUMO_TLS_FILE,
+    SumoAgentId, SumoExportErrorCode, SumoRoadExportOptions, SumoVehicleTypeOptions,
+    export_network, export_routes,
 };
 use roadsim_compiled_network::{
-    CapabilityId, CapabilityRequirements, CompiledControlTable, CompiledLaneId, CompiledLaneUse,
-    CompiledMovement, CompiledMovementCurve, CompiledMovementId, CompiledNetwork,
+    CapabilityId, CapabilityRequirements, CompiledControlTable, CompiledDemandFlow,
+    CompiledDemandInterval, CompiledDemandMode, CompiledDemandTable, CompiledLaneId,
+    CompiledLaneUse, CompiledMovement, CompiledMovementCurve, CompiledMovementId, CompiledNetwork,
     CompiledNetworkHeader, CompiledPoint, CompiledSignalController, CompiledSignalGroup,
     CompiledSignalGroupId, CompiledSignalIndication, CompiledSignalPhase, CompiledSignalProgram,
     CompiledSignalState, CompiledStopPosition, CompiledTopology, LaneAdjacency, LaneGraph,
@@ -13,8 +15,8 @@ use roadsim_compiled_network::{
     PedestrianNodeOrigin, SourceRevision,
 };
 use roadsim_types::{
-    CorridorId, JunctionId, LaneId, Sha256Digest, SignalControllerId, SignalGroupId, SignalPhaseId,
-    SignalProgramId, StopLineId, WalkingAreaId,
+    CorridorId, DemandFlowId, DemandProfileId, JunctionId, LaneId, Sha256Digest,
+    SignalControllerId, SignalGroupId, SignalPhaseId, SignalProgramId, StopLineId, WalkingAreaId,
 };
 use std::{path::PathBuf, process::Command};
 
@@ -573,6 +575,132 @@ fn pedestrian_network_fails_before_t07_instead_of_being_dropped() {
         error.code(),
         SumoExportErrorCode::UnsupportedPedestrianNetwork
     );
+}
+
+fn car_demand(intervals: Vec<CompiledDemandInterval>) -> CompiledDemandTable {
+    CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        8,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Car,
+            CompiledLaneId::new(S_IN),
+            CompiledLaneId::new(N_OUT),
+            intervals,
+        )],
+    )
+    .unwrap()
+}
+
+fn vehicle_type() -> SumoVehicleTypeOptions {
+    SumoVehicleTypeOptions::new(4.5, 1.8, 13.89).unwrap()
+}
+
+#[test]
+fn compiled_demand_exports_one_sumo_flow_per_authored_interval() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let bundle = export_network(&network, options()).unwrap();
+    let demand = car_demand(vec![
+        CompiledDemandInterval::new(0.0, 600.0, 720.0).unwrap(),
+        CompiledDemandInterval::new(600.0, 1200.0, 360.0).unwrap(),
+    ]);
+
+    let routes = export_routes(&network, &demand, &bundle, vehicle_type()).unwrap();
+    assert_eq!(
+        routes,
+        export_routes(&network, &demand, &bundle, vehicle_type()).unwrap()
+    );
+    assert_eq!(routes.version(), SUMO_ROUTES_EXPORT_VERSION);
+    assert_eq!(routes.flow_mappings().len(), 2);
+    assert_eq!(routes.routes_xml().matches("<flow ").count(), 2);
+
+    // The vehicle footprint matches the one the worker already reports.
+    assert!(
+        routes
+            .routes_xml()
+            .contains("<vType id=\"rs_car\" vClass=\"passenger\" length=\"4.5\" width=\"1.8\"")
+    );
+    // Authored units are preserved: seconds for the interval, vehicles per hour
+    // for the rate. No arrival process is invented here.
+    assert!(routes.routes_xml().contains(
+        "begin=\"0\" end=\"600\" vehsPerHour=\"720\" from=\"rs_edge_0\" to=\"rs_edge_5\""
+    ));
+    assert!(routes.routes_xml().contains(
+        "begin=\"600\" end=\"1200\" vehsPerHour=\"360\" from=\"rs_edge_0\" to=\"rs_edge_5\""
+    ));
+
+    for (index, mapping) in routes.flow_mappings().iter().enumerate() {
+        assert_eq!(mapping.demand_flow_id(), DemandFlowId::from_u128(80));
+        assert_eq!(mapping.interval_index(), index as u16);
+        assert_eq!(mapping.from_edge_id().as_str(), "rs_edge_0");
+        assert_eq!(mapping.to_edge_id().as_str(), "rs_edge_5");
+        assert!(routes.routes_xml().contains(mapping.flow_id()));
+    }
+}
+
+#[test]
+fn demand_compiled_against_another_network_is_rejected() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let bundle = export_network(&network, options()).unwrap();
+    let demand = CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        2,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Car,
+            CompiledLaneId::new(0),
+            CompiledLaneId::new(1),
+            vec![CompiledDemandInterval::new(0.0, 60.0, 60.0).unwrap()],
+        )],
+    )
+    .unwrap();
+
+    let error = export_routes(&network, &demand, &bundle, vehicle_type()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::DemandNetworkMismatch);
+    assert!(
+        error
+            .object_refs()
+            .contains(&DemandProfileId::from_u128(90).into())
+    );
+}
+
+#[test]
+fn bus_demand_is_rejected_before_it_becomes_a_passenger_car() {
+    let network = four_arm_network(empty_controls(TURNS.len() as u32));
+    let bundle = export_network(&network, options()).unwrap();
+    let demand = CompiledDemandTable::new(
+        DemandProfileId::from_u128(90),
+        8,
+        vec![CompiledDemandFlow::new(
+            DemandFlowId::from_u128(80),
+            CompiledDemandMode::Bus,
+            CompiledLaneId::new(S_IN),
+            CompiledLaneId::new(N_OUT),
+            vec![CompiledDemandInterval::new(0.0, 60.0, 60.0).unwrap()],
+        )],
+    )
+    .unwrap();
+
+    let error = export_routes(&network, &demand, &bundle, vehicle_type()).unwrap_err();
+    assert_eq!(error.code(), SumoExportErrorCode::UnsupportedDemandMode);
+    assert!(
+        error
+            .object_refs()
+            .contains(&DemandFlowId::from_u128(80).into())
+    );
+}
+
+#[test]
+fn vehicle_type_rejects_invalid_dimensions_and_speed() {
+    for (length, width, speed) in [
+        (0.0, 1.8, 13.89),
+        (4.5, -1.0, 13.89),
+        (4.5, 1.8, f64::NAN),
+        (f64::INFINITY, 1.8, 13.89),
+    ] {
+        let error = SumoVehicleTypeOptions::new(length, width, speed).unwrap_err();
+        assert_eq!(error.code(), SumoExportErrorCode::InvalidVehicleType);
+    }
 }
 
 #[test]

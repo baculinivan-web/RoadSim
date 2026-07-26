@@ -1,11 +1,12 @@
 use proptest::prelude::*;
 use roadsim_compiled_network::{
-    CapabilityId, CompiledLaneId, CompiledMovementId, CompiledNetwork, LaneAdjacency, LaneGraph,
-    PedestrianNodeOrigin, SourceRevision,
+    COMPILED_DEMAND_SCHEMA_VERSION, CapabilityId, CompiledDemandMode, CompiledLaneId,
+    CompiledMovementId, CompiledNetwork, LaneAdjacency, LaneGraph, PedestrianNodeOrigin,
+    SourceRevision,
 };
 use roadsim_compiler::{
     CompileError, CompileErrorCode, CompileOptions, GeometryContext, TessellationOptions,
-    compile_project as compile_project_with_options,
+    compile_demand, compile_project as compile_project_with_options,
 };
 use roadsim_domain::{
     AuthorityCrs, AxisOrder, CoordinateReference, Corridor, CorridorEnd, CorridorEndpointRef,
@@ -993,4 +994,157 @@ proptest! {
         prop_assert_eq!(first.movements(), second.movements());
         prop_assert_eq!(first.movements().movements().len(), outgoing_count as usize);
     }
+}
+
+#[test]
+fn authored_demand_compiles_to_boundary_lanes_of_the_published_network() {
+    let design = DesignCatalog::with_multimodal(
+        vec![corridor(10, 20, 0.0), corridor(11, 21, 50.0)],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let project = project(
+        design,
+        flow(
+            80,
+            DemandMode::Car,
+            DemandEndpoint::Corridor(CorridorId::from_u128(10)),
+            DemandEndpoint::Corridor(CorridorId::from_u128(11)),
+        ),
+    );
+    let network = compile_project(&project, SourceRevision::new(1)).unwrap();
+
+    let demand = compile_demand(&project, &network, DemandProfileId::from_u128(90)).unwrap();
+    assert_eq!(demand.schema_version(), COMPILED_DEMAND_SCHEMA_VERSION);
+    assert_eq!(demand.demand_profile_id(), DemandProfileId::from_u128(90));
+    assert_eq!(demand.lane_count(), network.lanes().len() as u32);
+    assert_eq!(demand.flows().len(), 1);
+
+    let compiled_flow = &demand.flows()[0];
+    assert_eq!(compiled_flow.demand_flow_id(), DemandFlowId::from_u128(80));
+    assert_eq!(compiled_flow.mode(), CompiledDemandMode::Car);
+    assert_eq!(
+        network
+            .lane_origin(compiled_flow.origin_lane())
+            .unwrap()
+            .corridor_id(),
+        CorridorId::from_u128(10)
+    );
+    assert_eq!(
+        network
+            .lane_origin(compiled_flow.destination_lane())
+            .unwrap()
+            .corridor_id(),
+        CorridorId::from_u128(11)
+    );
+    assert!(network.lane_graph().can_reach(
+        compiled_flow.origin_lane(),
+        compiled_flow.destination_lane()
+    ));
+
+    // Authored units survive: seconds stay seconds and the rate stays hourly.
+    let interval = compiled_flow.intervals()[0];
+    assert_eq!(interval.start_s(), 0.0);
+    assert_eq!(interval.end_s(), 60.0);
+    assert_eq!(interval.flow_per_hour(), 60.0);
+
+    // Recompiling the same profile is deterministic.
+    assert_eq!(
+        demand,
+        compile_demand(&project, &network, DemandProfileId::from_u128(90)).unwrap()
+    );
+}
+
+#[test]
+fn unknown_demand_profile_blocks_the_run_with_object_evidence() {
+    let design = DesignCatalog::with_multimodal(
+        vec![corridor(10, 20, 0.0), corridor(11, 21, 50.0)],
+        vec![
+            Junction::new(
+                JunctionId::from_u128(40),
+                vec![
+                    CorridorEndpointRef::new(CorridorId::from_u128(10), CorridorEnd::End),
+                    CorridorEndpointRef::new(CorridorId::from_u128(11), CorridorEnd::Start),
+                ],
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let project = project(
+        design,
+        flow(
+            80,
+            DemandMode::Car,
+            DemandEndpoint::Corridor(CorridorId::from_u128(10)),
+            DemandEndpoint::Corridor(CorridorId::from_u128(11)),
+        ),
+    );
+    let network = compile_project(&project, SourceRevision::new(1)).unwrap();
+
+    let error = compile_demand(&project, &network, DemandProfileId::from_u128(91)).unwrap_err();
+    assert_eq!(error.code(), CompileErrorCode::DemandProfileUnknown);
+    assert!(
+        error
+            .object_refs()
+            .contains(&DemandProfileId::from_u128(91).into())
+    );
+}
+
+#[test]
+fn pedestrian_demand_is_not_silently_compiled_as_vehicle_demand() {
+    let design = DesignCatalog::with_multimodal(
+        vec![corridor(10, 20, 0.0)],
+        vec![],
+        vec![walking_area(60, 0.0), walking_area(61, 10.0)],
+        vec![],
+        vec![
+            Crossing::new(
+                CrossingId::from_u128(70),
+                CorridorId::from_u128(10),
+                length(25.0),
+                length(4.0),
+                WalkingAreaId::from_u128(60),
+                WalkingAreaId::from_u128(61),
+            )
+            .unwrap(),
+        ],
+        vec![],
+    )
+    .unwrap();
+    let project = project(
+        design,
+        flow(
+            80,
+            DemandMode::Pedestrian,
+            DemandEndpoint::WalkingArea(WalkingAreaId::from_u128(60)),
+            DemandEndpoint::WalkingArea(WalkingAreaId::from_u128(61)),
+        ),
+    );
+    let network = compile_project(&project, SourceRevision::new(1)).unwrap();
+
+    let error = compile_demand(&project, &network, DemandProfileId::from_u128(90)).unwrap_err();
+    assert_eq!(error.code(), CompileErrorCode::DemandModeUnsupported);
+    assert!(
+        error
+            .object_refs()
+            .contains(&DemandFlowId::from_u128(80).into())
+    );
 }

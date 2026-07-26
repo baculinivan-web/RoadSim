@@ -574,6 +574,21 @@ Movement сигнализированного узла без группы от�
 `backend.sumo.signal_intergreen.unsupported`. Stop positions остаются
 неподдержанными отдельным кодом.
 
+Статус E10-T06: 🟢 добавлен отдельный compiled demand contract
+(`CompiledDemandTable`, schema v1): спрос — состояние сценария, поэтому он не
+входит в CSN и одна и та же сеть запускается с разными профилями без
+перекомпиляции топологии. `compile_demand` резолвит authored corridor endpoints
+в единственную boundary lane (source без предшественника, sink без
+преемника), блокирует неизвестный профиль, неоднозначный endpoint,
+недостижимую пару и нецелевой mode до backend. Экспортер переводит каждый
+authored interval ровно в один `<flow>` с явными `begin`/`end`/`vehsPerHour` —
+arrival process и rate не выдумываются, — и сохраняет
+`DemandFlowId → interval index → SUMO flow/edges`. Маршрут между boundary edges
+пока считает SUMO по exported connection table; authored full routes остаются
+следующим шагом. Opt-in smoke на exact SUMO `1.27.1` прогоняет authored car
+через exported junction и требует непустой visual frame — это исполняемое
+доказательство M4 для автомобильного сценария.
+
 Статус E10-T08: 🟡 native bridge ABI v2 собирает vehicle positions/headings и
 footprints одним bounded вызовом после `StepSession`; worker публикует
 отсортированный protocol-v3 SoA frame через отдельный latest-wins writer, не

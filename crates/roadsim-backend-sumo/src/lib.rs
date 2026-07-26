@@ -5,10 +5,10 @@
 //! where the returned bundle is materialized.
 
 use roadsim_compiled_network::{
-    CompiledLaneId, CompiledLaneUse, CompiledMovementId, CompiledNetwork, CompiledPoint,
-    CompiledSignalIndication, LaneOrigin,
+    CompiledDemandMode, CompiledDemandTable, CompiledLaneId, CompiledLaneUse, CompiledMovementId,
+    CompiledNetwork, CompiledPoint, CompiledSignalIndication, LaneOrigin,
 };
-use roadsim_types::{JunctionId, ObjectRef, SignalControllerId, SignalProgramId};
+use roadsim_types::{DemandFlowId, JunctionId, ObjectRef, SignalControllerId, SignalProgramId};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -24,8 +24,12 @@ pub const SUMO_NODES_FILE: &str = "roadsim.nod.xml";
 pub const SUMO_EDGES_FILE: &str = "roadsim.edg.xml";
 /// Conventional filename for the generated SUMO plain connections document.
 pub const SUMO_CONNECTIONS_FILE: &str = "roadsim.con.xml";
+/// Conventional filename for the generated SUMO route document.
+pub const SUMO_ROUTES_FILE: &str = "roadsim.rou.xml";
 /// Conventional filename for the generated SUMO traffic light logic document.
 pub const SUMO_TLS_FILE: &str = "roadsim.tll.xml";
+/// Stable identifier of the generated passenger car type.
+pub const SUMO_CAR_TYPE_ID: &str = "rs_car";
 /// Stable namespace used to recover RoadSim compact agent IDs in the worker.
 pub const SUMO_AGENT_ID_PREFIX: &str = "rs_agent_";
 
@@ -97,6 +101,9 @@ pub enum SumoExportErrorCode {
     UnsupportedLaneUse,
     UnsupportedPedestrianNetwork,
     UnsupportedStopPositions,
+    UnsupportedDemandMode,
+    InvalidVehicleType,
+    DemandNetworkMismatch,
     UnsupportedSignalIntergreen,
     MovementEndpointsDisconnected,
     JunctionMovementsIncomplete,
@@ -115,6 +122,9 @@ impl SumoExportErrorCode {
             Self::UnsupportedLaneUse => "backend.sumo.lane_use.unsupported",
             Self::UnsupportedPedestrianNetwork => "backend.sumo.pedestrian_network.unsupported",
             Self::UnsupportedStopPositions => "backend.sumo.stop_positions.unsupported",
+            Self::UnsupportedDemandMode => "backend.sumo.demand_mode.unsupported",
+            Self::InvalidVehicleType => "backend.sumo.vehicle_type.invalid",
+            Self::DemandNetworkMismatch => "backend.sumo.demand.network_mismatch",
             Self::UnsupportedSignalIntergreen => "backend.sumo.signal_intergreen.unsupported",
             Self::MovementEndpointsDisconnected => "backend.sumo.movement.endpoints_disconnected",
             Self::JunctionMovementsIncomplete => "backend.sumo.junction_movements.incomplete",
@@ -371,6 +381,209 @@ impl SumoNetworkBundle {
     pub fn signal_mappings(&self) -> &[SumoSignalMapping] {
         &self.signal_mappings
     }
+}
+
+/// Version of the typed SUMO route export contract.
+pub const SUMO_ROUTES_EXPORT_VERSION: u32 = 1;
+
+/// Explicit vehicle parameters that the CSN does not yet carry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SumoVehicleTypeOptions {
+    length_m: f64,
+    width_m: f64,
+    max_speed_mps: f64,
+}
+
+impl SumoVehicleTypeOptions {
+    pub fn new(length_m: f64, width_m: f64, max_speed_mps: f64) -> Result<Self, SumoExportError> {
+        if ![length_m, width_m, max_speed_mps]
+            .into_iter()
+            .all(|value| value.is_finite() && value > 0.0)
+        {
+            return Err(SumoExportError::new(
+                SumoExportErrorCode::InvalidVehicleType,
+                Vec::new(),
+            ));
+        }
+        Ok(Self {
+            length_m,
+            width_m,
+            max_speed_mps,
+        })
+    }
+
+    #[must_use]
+    pub const fn length_m(self) -> f64 {
+        self.length_m
+    }
+
+    #[must_use]
+    pub const fn width_m(self) -> f64 {
+        self.width_m
+    }
+
+    #[must_use]
+    pub const fn max_speed_mps(self) -> f64 {
+        self.max_speed_mps
+    }
+}
+
+/// Lossless mapping from one compiled demand interval to one SUMO flow.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SumoFlowMapping {
+    demand_flow_id: DemandFlowId,
+    interval_index: u16,
+    flow_id: String,
+    from_edge_id: SumoEdgeId,
+    to_edge_id: SumoEdgeId,
+}
+
+impl SumoFlowMapping {
+    #[must_use]
+    pub const fn demand_flow_id(&self) -> DemandFlowId {
+        self.demand_flow_id
+    }
+
+    /// Index of the authored interval this SUMO flow was generated from.
+    #[must_use]
+    pub const fn interval_index(&self) -> u16 {
+        self.interval_index
+    }
+
+    #[must_use]
+    pub fn flow_id(&self) -> &str {
+        &self.flow_id
+    }
+
+    #[must_use]
+    pub const fn from_edge_id(&self) -> &SumoEdgeId {
+        &self.from_edge_id
+    }
+
+    #[must_use]
+    pub const fn to_edge_id(&self) -> &SumoEdgeId {
+        &self.to_edge_id
+    }
+}
+
+/// Complete in-memory route bundle ready for bounded materialization.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SumoRoutesBundle {
+    version: u32,
+    routes_xml: String,
+    flow_mappings: Vec<SumoFlowMapping>,
+}
+
+impl SumoRoutesBundle {
+    #[must_use]
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    #[must_use]
+    pub fn routes_xml(&self) -> &str {
+        &self.routes_xml
+    }
+
+    #[must_use]
+    pub fn flow_mappings(&self) -> &[SumoFlowMapping] {
+        &self.flow_mappings
+    }
+}
+
+/// Translates compiled demand into SUMO flows against an exported network.
+///
+/// Each authored interval becomes exactly one `<flow>` with an explicit
+/// `begin`/`end`/`vehsPerHour`, so no arrival process or rate is invented here.
+/// Routing between the resolved boundary edges is left to SUMO's shortest path
+/// over the exported connection table; the CSN does not yet author full routes.
+pub fn export_routes(
+    network: &CompiledNetwork,
+    demand: &CompiledDemandTable,
+    bundle: &SumoNetworkBundle,
+    vehicle_type: SumoVehicleTypeOptions,
+) -> Result<SumoRoutesBundle, SumoExportError> {
+    if demand.lane_count() != network.lanes().len() as u32 {
+        return Err(SumoExportError::new(
+            SumoExportErrorCode::DemandNetworkMismatch,
+            vec![demand.demand_profile_id().into()],
+        ));
+    }
+    let mut routes_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<routes>\n");
+    writeln!(
+        routes_xml,
+        "    <vType id=\"{SUMO_CAR_TYPE_ID}\" vClass=\"passenger\" length=\"{}\" width=\"{}\" maxSpeed=\"{}\"/>",
+        vehicle_type.length_m(),
+        vehicle_type.width_m(),
+        vehicle_type.max_speed_mps(),
+    )
+    .expect("writing to String cannot fail");
+
+    let mut flow_mappings = Vec::new();
+    for flow in demand.flows() {
+        if flow.mode() != CompiledDemandMode::Car {
+            return Err(SumoExportError::new(
+                SumoExportErrorCode::UnsupportedDemandMode,
+                vec![flow.demand_flow_id().into()],
+            ));
+        }
+        let from_edge_id = edge_for_lane(bundle, flow.origin_lane()).ok_or_else(|| {
+            SumoExportError::new(
+                SumoExportErrorCode::DemandNetworkMismatch,
+                vec![flow.demand_flow_id().into()],
+            )
+        })?;
+        let to_edge_id = edge_for_lane(bundle, flow.destination_lane()).ok_or_else(|| {
+            SumoExportError::new(
+                SumoExportErrorCode::DemandNetworkMismatch,
+                vec![flow.demand_flow_id().into()],
+            )
+        })?;
+        for (index, interval) in flow.intervals().iter().enumerate() {
+            let interval_index = u16::try_from(index).map_err(|_| {
+                SumoExportError::new(
+                    SumoExportErrorCode::NetworkTooLarge,
+                    vec![flow.demand_flow_id().into()],
+                )
+            })?;
+            let flow_id = format!(
+                "rs_flow_{}_{interval_index}",
+                flow.demand_flow_id().as_uuid().simple()
+            );
+            writeln!(
+                routes_xml,
+                "    <flow id=\"{flow_id}\" type=\"{SUMO_CAR_TYPE_ID}\" begin=\"{}\" end=\"{}\" vehsPerHour=\"{}\" from=\"{}\" to=\"{}\" departLane=\"free\" departSpeed=\"max\"/>",
+                interval.start_s(),
+                interval.end_s(),
+                interval.flow_per_hour(),
+                from_edge_id.as_str(),
+                to_edge_id.as_str(),
+            )
+            .expect("writing to String cannot fail");
+            flow_mappings.push(SumoFlowMapping {
+                demand_flow_id: flow.demand_flow_id(),
+                interval_index,
+                flow_id,
+                from_edge_id: from_edge_id.clone(),
+                to_edge_id: to_edge_id.clone(),
+            });
+        }
+    }
+    routes_xml.push_str("</routes>\n");
+
+    Ok(SumoRoutesBundle {
+        version: SUMO_ROUTES_EXPORT_VERSION,
+        routes_xml,
+        flow_mappings,
+    })
+}
+
+fn edge_for_lane(bundle: &SumoNetworkBundle, lane_id: CompiledLaneId) -> Option<&SumoEdgeId> {
+    bundle
+        .lane_mappings()
+        .iter()
+        .find(|mapping| mapping.compiled_lane_id() == lane_id)
+        .map(SumoLaneMapping::edge_id)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

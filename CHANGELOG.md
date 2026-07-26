@@ -143,6 +143,17 @@ schema, ruleset, metric definitions и protocol всегда указывают 
   неизвестного узла и authored `intergreen > 0` отклоняются стабильными кодами;
   трактовка clearance между amber и all-red остаётся за domain owner.
 
+- Добавлен backend-independent compiled demand contract (`CompiledDemandTable`,
+  schema v1) и `compile_demand`: authored corridor endpoints резолвятся в
+  единственную boundary lane опубликованной CSN, а неизвестный профиль,
+  неоднозначный endpoint, недостижимая пара и нецелевой mode блокируются
+  object-linked diagnostics. Спрос остаётся состоянием сценария и не входит в
+  CSN.
+- SUMO export переводит compiled demand в `roadsim.rou.xml`: один `<vType>` с
+  явными габаритами и по одному `<flow>` на authored interval с сохранёнными
+  `begin`/`end`/`vehsPerHour`; `SumoFlowMapping` хранит обратное отображение.
+  Non-car режимы и demand, скомпилированный против другой сети, отклоняются.
+
 ### Changed
 
 - SUMO plain-network export contract повышен с v2 до v3: bundle содержит

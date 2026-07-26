@@ -7,7 +7,8 @@
 
 use roadsim_compiled_network::{
     COMPILED_NETWORK_SCHEMA_VERSION, CapabilityId, CapabilityRequirements, CompiledConflictKind,
-    CompiledConflictZone, CompiledControlTable, CompiledLaneId, CompiledLaneUse, CompiledMovement,
+    CompiledConflictZone, CompiledControlTable, CompiledDemandFlow, CompiledDemandInterval,
+    CompiledDemandMode, CompiledDemandTable, CompiledLaneId, CompiledLaneUse, CompiledMovement,
     CompiledMovementCurve, CompiledMovementId, CompiledNetwork, CompiledNetworkHeader,
     CompiledPedestrianNodeId, CompiledPoint, CompiledSignalController, CompiledSignalGroup,
     CompiledSignalGroupId, CompiledSignalIndication, CompiledSignalPhase, CompiledSignalProgram,
@@ -23,7 +24,7 @@ use roadsim_geometry::{
     CubicBezier2, Segment2, SegmentIntersection, segment_intersection, tessellate_cubic,
 };
 pub use roadsim_geometry::{GeometryContext, TessellationOptions};
-use roadsim_types::{CoordinateMeters, ObjectRef, Sha256Digest};
+use roadsim_types::{CoordinateMeters, DemandFlowId, DemandProfileId, ObjectRef, Sha256Digest};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -165,6 +166,10 @@ pub enum CompileErrorCode {
     PedestrianGraphInvariant,
     DemandEndpointUnreachable,
     DemandModeUnsupported,
+    DemandProfileUnknown,
+    DemandEndpointAmbiguous,
+    DemandIntervalInvalid,
+    DemandTableInvariant,
     NetworkInvariant,
 }
 
@@ -196,6 +201,10 @@ impl CompileErrorCode {
             Self::PedestrianGraphInvariant => "compiler.pedestrian_graph.invariant",
             Self::DemandEndpointUnreachable => "compiler.demand.endpoint_unreachable",
             Self::DemandModeUnsupported => "compiler.demand.mode_unsupported",
+            Self::DemandProfileUnknown => "compiler.demand.profile_unknown",
+            Self::DemandEndpointAmbiguous => "compiler.demand.endpoint_ambiguous",
+            Self::DemandIntervalInvalid => "compiler.demand.interval_invalid",
+            Self::DemandTableInvariant => "compiler.demand.invariant",
             Self::NetworkInvariant => "compiler.network.invariant",
         }
     }
@@ -1117,6 +1126,167 @@ fn validate_demand_reachability(
         }
     }
     Ok(())
+}
+
+/// Compiles one authored demand profile against an already published CSN.
+///
+/// Demand is scenario state, so it is a separate artifact: the same network can
+/// be run with different profiles without recompiling topology. Endpoints are
+/// resolved to the unique boundary lane of the authored corridor; an ambiguous
+/// or unreachable endpoint blocks the run instead of picking a lane silently.
+pub fn compile_demand(
+    project: &Project,
+    network: &CompiledNetwork,
+    demand_profile_id: DemandProfileId,
+) -> Result<CompiledDemandTable, CompileError> {
+    let profile = project
+        .study_catalog()
+        .demand_profiles()
+        .iter()
+        .find(|profile| profile.id() == demand_profile_id)
+        .ok_or_else(|| {
+            CompileError::new(
+                CompileErrorCode::DemandProfileUnknown,
+                vec![demand_profile_id.into()],
+            )
+        })?;
+
+    let lane_origins: Vec<LaneOrigin> = (0..network.lanes().len())
+        .map(|index| {
+            network
+                .lane_origin(CompiledLaneId::new(index as u32))
+                .expect("CompiledNetwork guarantees one origin per lane")
+        })
+        .collect();
+
+    let mut flows = Vec::with_capacity(profile.flows().len());
+    for flow in profile.flows() {
+        let mode = match flow.mode() {
+            DemandMode::Car => CompiledDemandMode::Car,
+            DemandMode::Bus => CompiledDemandMode::Bus,
+            DemandMode::Pedestrian | DemandMode::Tram => {
+                return Err(CompileError::new(
+                    CompileErrorCode::DemandModeUnsupported,
+                    vec![flow.id().into(), flow.origin().object_ref()],
+                ));
+            }
+        };
+        let (DemandEndpoint::Corridor(origin), DemandEndpoint::Corridor(destination)) =
+            (flow.origin(), flow.destination())
+        else {
+            return Err(CompileError::new(
+                CompileErrorCode::DemandModeUnsupported,
+                vec![
+                    flow.id().into(),
+                    flow.origin().object_ref(),
+                    flow.destination().object_ref(),
+                ],
+            ));
+        };
+        let origin_lane = boundary_lane(
+            flow.id(),
+            origin,
+            &lane_origins,
+            network.lane_graph(),
+            LaneBoundary::Source,
+        )?;
+        let destination_lane = boundary_lane(
+            flow.id(),
+            destination,
+            &lane_origins,
+            network.lane_graph(),
+            LaneBoundary::Sink,
+        )?;
+        if origin_lane == destination_lane
+            || !network
+                .lane_graph()
+                .can_reach(origin_lane, destination_lane)
+        {
+            return Err(CompileError::new(
+                CompileErrorCode::DemandEndpointUnreachable,
+                vec![
+                    flow.id().into(),
+                    flow.origin().object_ref(),
+                    flow.destination().object_ref(),
+                ],
+            ));
+        }
+        let mut intervals = Vec::with_capacity(flow.intervals().len());
+        for interval in flow.intervals() {
+            intervals.push(
+                CompiledDemandInterval::new(
+                    interval.start().get(),
+                    interval.end().get(),
+                    interval.flow_per_hour().get(),
+                )
+                .ok_or_else(|| {
+                    CompileError::new(
+                        CompileErrorCode::DemandIntervalInvalid,
+                        vec![flow.id().into()],
+                    )
+                })?,
+            );
+        }
+        flows.push(CompiledDemandFlow::new(
+            flow.id(),
+            mode,
+            origin_lane,
+            destination_lane,
+            intervals,
+        ));
+    }
+
+    CompiledDemandTable::new(demand_profile_id, network.lanes().len() as u32, flows).map_err(|_| {
+        CompileError::new(
+            CompileErrorCode::DemandTableInvariant,
+            vec![demand_profile_id.into()],
+        )
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LaneBoundary {
+    /// Lane that traffic can enter the network on: it has no predecessor.
+    Source,
+    /// Lane that traffic can leave the network on: it has no successor.
+    Sink,
+}
+
+/// Resolves one authored corridor to its single boundary lane for a demand end.
+fn boundary_lane(
+    flow_id: DemandFlowId,
+    corridor_id: roadsim_types::CorridorId,
+    lane_origins: &[LaneOrigin],
+    lane_graph: &LaneGraph,
+    boundary: LaneBoundary,
+) -> Result<CompiledLaneId, CompileError> {
+    let candidates: Vec<CompiledLaneId> = lane_origins
+        .iter()
+        .enumerate()
+        .filter(|(_, origin)| origin.corridor_id() == corridor_id)
+        .map(|(index, _)| CompiledLaneId::new(index as u32))
+        .filter(|lane_id| match boundary {
+            LaneBoundary::Source => !lane_graph
+                .adjacency()
+                .iter()
+                .any(|edge| edge.to() == *lane_id),
+            LaneBoundary::Sink => !lane_graph
+                .adjacency()
+                .iter()
+                .any(|edge| edge.from() == *lane_id),
+        })
+        .collect();
+    match candidates.as_slice() {
+        [lane_id] => Ok(*lane_id),
+        [] => Err(CompileError::new(
+            CompileErrorCode::DemandEndpointUnreachable,
+            vec![flow_id.into(), corridor_id.into()],
+        )),
+        _ => Err(CompileError::new(
+            CompileErrorCode::DemandEndpointAmbiguous,
+            vec![flow_id.into(), corridor_id.into()],
+        )),
+    }
 }
 
 fn corridor_reachable(
