@@ -166,6 +166,10 @@ schema, ruleset, metric definitions и protocol всегда указывают 
 - Desktop shell берёт enablement кнопок симуляции из оркестратора, поэтому UI
   не предлагает переход, который run отклонит.
 
+- Добавлен `FrameSnapshotAdapter`: backend frame переводится в GPU-ready SoA с
+  переиспользуемыми буферами и явным bound по числу агентов; отклонённый кадр
+  не разрушает предыдущий snapshot, а backend agent/lane ID сохраняются.
+
 ### Changed
 
 - SUMO plain-network export contract повышен с v2 до v3: bundle содержит
